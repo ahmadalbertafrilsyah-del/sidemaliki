@@ -10,15 +10,6 @@ import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import { Rnd } from "react-rnd";
 
-// IMPORT PDF.JS UTAMA
-// @ts-ignore
-import * as pdfjsLib from "pdfjs-dist";
-
-// PENGATURAN WORKER VERSI MODERN (.mjs)
-if (typeof window !== "undefined") {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-}
-
 // IMPORT KOMPONEN MODAL UNTUK BPH
 import ModalTambahSurat from "@/components/ModalTambahSurat";
 import ModalTambahKeuangan from "@/components/ModalTambahKeuangan";
@@ -119,6 +110,16 @@ export default function DashboardBPH() {
 
   const userRole = typeof window !== 'undefined' ? localStorage.getItem("userRole") : "";
 
+  // Dynamic import untuk pdfjsLib, agar tidak error saat SSR/Build di Vercel
+  const loadPdfjsLib = async () => {
+    if (typeof window !== "undefined") {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+      return pdfjsLib;
+    }
+    return null;
+  };
+
   useEffect(() => {
     if (userRole !== "bph" && typeof window !== 'undefined') {
       alert("Akses ditolak! Anda bukan BPH.");
@@ -209,6 +210,10 @@ export default function DashboardBPH() {
     setIsAiLoading(true);
 
     try {
+      // DYNAMIC IMPORT UNTUK MENCEGAH ERROR VERCEL
+      const pdfjsLib = await loadPdfjsLib();
+      if (!pdfjsLib) throw new Error("Gagal memuat pustaka PDF.js");
+
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       const lastPageNum = pdf.numPages; // Kita ambil halaman terakhir
@@ -221,7 +226,7 @@ export default function DashboardBPH() {
       if (context) {
         canvas.height = viewport.height;
         canvas.width = viewport.width;
-        // FIX UNTUK ERROR TYPESCRIPT DI SINI 👇
+        // FIX UNTUK ERROR TYPESCRIPT
         await page.render({ canvasContext: context, viewport: viewport } as any).promise;
         setPdfPreviewUrl(canvas.toDataURL("image/jpeg", 0.8)); // Jadikan background
       } else {
@@ -366,11 +371,17 @@ export default function DashboardBPH() {
         body: JSON.stringify({ action: actionType, payload: payloadData })
       });
       const data = await response.json();
-      if (response.ok) { setAiResponse(data.result); } 
-      else { alert(`AI Error: ${data.error}`); }
-    } catch (error) {
-      alert("Gagal terhubung ke API AI. Pastikan file route.ts berjalan.");
-    } finally { setIsAiLoading(false); }
+      
+      if (response.ok) { 
+        setAiResponse(data.result); 
+      } else { 
+        alert(`AI Error: ${data.error}\n\nDetail Teknis:\n${data.details || "Tidak ada detail tambahan"}`); 
+      }
+    } catch (error: any) {
+      alert(`Gagal terhubung ke API Server: ${error.message}`);
+    } finally { 
+      setIsAiLoading(false); 
+    }
   };
 
   const handleExtractAndCheck = async () => {
@@ -381,6 +392,10 @@ export default function DashboardBPH() {
     setIsAiLoading(true);
     setAiResponse("");
     try {
+      // DYNAMIC IMPORT PDFJS
+      const pdfjsLib = await loadPdfjsLib();
+      if (!pdfjsLib) throw new Error("Gagal memuat pustaka PDF.js");
+
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let fullText = "";
@@ -576,7 +591,7 @@ export default function DashboardBPH() {
 
           <li className="sidebar-heading">Manajemen Sistem</li>
           <li className="mt-1 mb-2"></li>
-          <li><a className={`nav-link ${activeMenu === "asisten_ai" ? "active" : ""}`} onClick={() => { setActiveMenu("asisten_ai"); setIsSidebarOpen(false); }}><i className="fas fa-robot text-primary"></i> <span>Asisten AI</span></a></li>
+          <li><a className={`nav-link ${activeMenu === "asisten_ai" ? "active" : ""}`} onClick={() => { setActiveMenu("asisten_ai"); setIsSidebarOpen(false); }}><i className="fas fa-robot"></i> <span>Asisten AI</span></a></li>
           <li><a className={`nav-link ${activeMenu === "kementerian" || activeMenu === "detail" ? "active" : ""}`} onClick={() => { setActiveMenu("kementerian"); setIsSidebarOpen(false); }}><i className="fas fa-users"></i> <span>Kelola Kementerian</span></a></li>
           <li><a className={`nav-link ${activeMenu === "pengaturan_web" ? "active" : ""}`} onClick={() => { setActiveMenu("pengaturan_web"); setIsSidebarOpen(false); }}><i className="fas fa-globe"></i> <span>Pengaturan Web</span></a></li>
           
@@ -662,14 +677,29 @@ export default function DashboardBPH() {
                     <h6 className="fw-bold text-gray-300 mb-2 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.8rem", color: "#94a3b8" }}><i className="fas fa-eye me-2"></i>Visi Organisasi</h6>
                     <p className="mb-0 text-white opacity-90 fw-500" style={{ lineHeight: "1.6" }}>{webVisi || "Visi belum diatur"}</p>
                   </div>
+                  
+                  {/* --- PERBAIKAN TAMPILAN MISI UTAMA DI SINI --- */}
                   <div className="p-3 bg-white bg-opacity-10 rounded-4 border border-white border-opacity-10 backdrop-blur">
-                    <h6 className="fw-bold text-gray-300 mb-2 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.8rem", color: "#94a3b8" }}><i className="fas fa-bullseye me-2"></i>Misi Utama</h6>
-                    <p className="mb-0 text-white opacity-90 fw-500 text-truncate" title={webMisi}>{webMisi ? webMisi.split('\n')[0] : "Misi belum diatur"}</p>
+                    <h6 className="fw-bold text-gray-300 mb-3 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.8rem", color: "#94a3b8" }}><i className="fas fa-bullseye me-2"></i>Misi Utama</h6>
+                    {webMisi ? (
+                      <ul className="list-unstyled mb-0">
+                        {webMisi.split('\n').filter(m => m.trim() !== '').map((misi, index) => (
+                          <li key={index} className="text-white opacity-90 fw-500 mb-2 d-flex align-items-start">
+                            <i className="fas fa-check-circle text-success mt-1 me-2" style={{fontSize: "0.8rem"}}></i>
+                            <span style={{ lineHeight: "1.5", fontSize: "0.95rem" }}>{misi}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mb-0 text-white opacity-90 fw-500">Misi belum diatur</p>
+                    )}
                   </div>
+                  {/* --- AKHIR PERBAIKAN TAMPILAN MISI --- */}
+
                 </div>
               </div>
             </div>
-            
+
             <div className="row g-4 mt-1">
               <div className="col-md-6">
                 <div className="card border-0 shadow-sm rounded-4 p-4 h-100 bg-white hover-elevate">
