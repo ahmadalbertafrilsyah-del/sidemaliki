@@ -10,15 +10,6 @@ import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import { Rnd } from "react-rnd";
 
-// IMPORT PDF.JS UTAMA
-// @ts-ignore
-import * as pdfjsLib from "pdfjs-dist";
-
-// PENGATURAN WORKER VERSI MODERN (.mjs)
-if (typeof window !== "undefined") {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
-}
-
 // IMPORT KOMPONEN MODAL UNTUK BPH
 import ModalTambahSurat from "@/components/ModalTambahSurat";
 import ModalTambahKeuangan from "@/components/ModalTambahKeuangan";
