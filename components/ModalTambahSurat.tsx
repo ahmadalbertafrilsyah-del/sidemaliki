@@ -10,7 +10,7 @@ interface ModalSuratProps {
   onClose: () => void;
 }
 
-export default function ModalTambahSurat({ kementerianName, tipe, onClose }: ModalSuratProps) {
+export default function ModalTambahSurat({ kementerianName, tipe, onClose, initialData }: any) {
   const [no, setNo] = useState("");
   const [asalTujuan, setAsalTujuan] = useState("");
   const [tglBuat, setTglBuat] = useState("");

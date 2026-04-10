@@ -10,6 +10,15 @@ import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import { Rnd } from "react-rnd";
 
+// IMPORT PDF.JS UTAMA
+// @ts-ignore
+import * as pdfjsLib from "pdfjs-dist";
+
+// PENGATURAN WORKER VERSI MODERN (.mjs)
+if (typeof window !== "undefined") {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+}
+
 // IMPORT KOMPONEN MODAL UNTUK BPH
 import ModalTambahSurat from "@/components/ModalTambahSurat";
 import ModalTambahKeuangan from "@/components/ModalTambahKeuangan";
@@ -108,6 +117,11 @@ export default function DashboardBPH() {
   const [notulenJudul, setNotulenJudul] = useState("");
   const [notulenTempat, setNotulenTempat] = useState("");
 
+  // --- FITUR BARU SURAT INDUK ---
+  const [searchMasuk, setSearchMasuk] = useState("");
+  const [searchKeluar, setSearchKeluar] = useState("");
+  const [editDataSurat, setEditDataSurat] = useState<any>(null); // Untuk data pre-fill Edit/AI
+
   const userRole = typeof window !== 'undefined' ? localStorage.getItem("userRole") : "";
 
   // Dynamic import untuk pdfjsLib, agar tidak error saat SSR/Build di Vercel
@@ -183,6 +197,105 @@ export default function DashboardBPH() {
     return () => { unsubSM(); unsubSK(); unsubKeu(); unsubInv(); };
   }, [selectedKem]);
 
+
+  // --- LOGIKA SURAT INDUK (SORTIR, FILTER, DELETE, EXPORT, AI SCAN) ---
+
+  const sortedMasuk = [...bphSuratMasuk]
+    .filter(s => s.hal?.toLowerCase().includes(searchMasuk.toLowerCase()))
+    .sort((a, b) => {
+      const parseDate = (d: string) => {
+        if (!d) return 0;
+        if (d.includes('/')) return new Date(d.split('/').reverse().join('-')).getTime();
+        return new Date(d).getTime();
+      };
+      return parseDate(b.tgl_datang || b.tgl_proses) - parseDate(a.tgl_datang || a.tgl_proses); // Tgl Datang Terbaru ke Lama
+    });
+
+  const sortedKeluar = [...bphSuratKeluar]
+    .filter(s => s.hal?.toLowerCase().includes(searchKeluar.toLowerCase()))
+    .sort((a, b) => {
+      const noA = parseInt(a.no?.toString().replace(/\D/g, '') || "0");
+      const noB = parseInt(b.no?.toString().replace(/\D/g, '') || "0");
+      return noA - noB; // Nomor Kecil ke Besar
+    });
+
+  const handleDeleteSurat = async (id: string, tipe: string) => {
+    if (confirm(`Yakin ingin menghapus surat ${tipe} ini?`)) {
+      const colName = tipe === "Masuk" ? "surat_masuk" : "surat_keluar";
+      await deleteDoc(doc(db, colName, id));
+    }
+  };
+
+  const exportToExcel = (data: any[], filename: string, tipe: string) => {
+    const formattedData = data.map(s => {
+      if (tipe === "Masuk") {
+        return { "Nomor Surat": s.no, "Asal Surat": s.asal || s.asalTujuan, "Tgl Buat": s.tgl_buat, "Tgl Datang": s.tgl_datang || s.tgl_proses, "Perihal": s.hal, "Keterangan": s.ket || "-" };
+      } else {
+        return { "Nomor Surat": s.no, "Tujuan Surat": s.tujuan || s.asalTujuan, "Tgl Buat": s.tgl_buat, "Tgl Kirim": s.tgl_kirim || s.tgl_proses, "Perihal": s.hal, "Keterangan": s.ket || "-" };
+      }
+    });
+    const ws = XLSX.utils.json_to_sheet(formattedData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Data Surat");
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/octet-stream' });
+    saveAs(blob, `${filename}.xlsx`);
+  };
+
+  const handleAIScanSurat = async (e: React.ChangeEvent<HTMLInputElement>, tipe: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsAiLoading(true);
+    try {
+      const pdfjsLib = await loadPdfjsLib();
+      if (!pdfjsLib) throw new Error("Gagal memuat pustaka PDF.js");
+
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = "";
+      
+      // Batasi scan maksimal 2 halaman awal untuk kecepatan & efisiensi
+      for (let i = 1; i <= Math.min(pdf.numPages, 2); i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        fullText += textContent.items.map((item: any) => item.str).join(" ") + "\n";
+      }
+
+      // Memanggil AI Backend untuk mengekstrak field
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          action: "parse_surat", // PASTIKAN backend Anda menangani action 'parse_surat'
+          payload: { teksSurat: fullText, tipeSurat: tipe, poPpta: poPptaFileName } 
+        })
+      });
+      
+      const data = await response.json();
+      if (response.ok) {
+        try {
+          const rawJson = data.result.replace(/```json/g, '').replace(/```/g, '').trim();
+          const parsedData = JSON.parse(rawJson);
+          setEditDataSurat(parsedData);
+          setTipeSurat(tipe);
+          setIsModalSuratOpen(true);
+        } catch(err) {
+          alert("Gagal membaca output AI. Pastikan AI backend merespons dengan format JSON murni.");
+        }
+      } else {
+        alert(`AI Error: ${data.error}`);
+      }
+    } catch (error: any) {
+      console.error("Scan AI Error:", error);
+      alert(`Gagal memindai file: ${error.message}`);
+    } finally {
+      setIsAiLoading(false);
+      e.target.value = ""; // Reset input file
+    }
+  };
+
+
   // Handler Gambar Interaktif
   const handleTtdKetuaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -210,7 +323,6 @@ export default function DashboardBPH() {
     setIsAiLoading(true);
 
     try {
-      // DYNAMIC IMPORT UNTUK MENCEGAH ERROR VERCEL
       const pdfjsLib = await loadPdfjsLib();
       if (!pdfjsLib) throw new Error("Gagal memuat pustaka PDF.js");
 
@@ -226,8 +338,8 @@ export default function DashboardBPH() {
       if (context) {
         canvas.height = viewport.height;
         canvas.width = viewport.width;
-        // FIX UNTUK ERROR TYPESCRIPT
-        await page.render({ canvasContext: context, viewport: viewport } as any).promise;
+        // @ts-ignore
+        await page.render({ canvasContext: context, viewport: viewport }).promise;
         setPdfPreviewUrl(canvas.toDataURL("image/jpeg", 0.8)); // Jadikan background
       } else {
         throw new Error("Browser tidak mendukung Canvas 2D.");
@@ -392,7 +504,6 @@ export default function DashboardBPH() {
     setIsAiLoading(true);
     setAiResponse("");
     try {
-      // DYNAMIC IMPORT PDFJS
       const pdfjsLib = await loadPdfjsLib();
       if (!pdfjsLib) throw new Error("Gagal memuat pustaka PDF.js");
 
@@ -591,7 +702,7 @@ export default function DashboardBPH() {
 
           <li className="sidebar-heading">Manajemen Sistem</li>
           <li className="mt-1 mb-2"></li>
-          <li><a className={`nav-link ${activeMenu === "asisten_ai" ? "active" : ""}`} onClick={() => { setActiveMenu("asisten_ai"); setIsSidebarOpen(false); }}><i className="fas fa-robot"></i> <span>Asisten AI</span></a></li>
+          <li><a className={`nav-link ${activeMenu === "asisten_ai" ? "active" : ""}`} onClick={() => { setActiveMenu("asisten_ai"); setIsSidebarOpen(false); }}><i className="fas fa-robot text-primary"></i> <span>Asisten AI</span></a></li>
           <li><a className={`nav-link ${activeMenu === "kementerian" || activeMenu === "detail" ? "active" : ""}`} onClick={() => { setActiveMenu("kementerian"); setIsSidebarOpen(false); }}><i className="fas fa-users"></i> <span>Kelola Kementerian</span></a></li>
           <li><a className={`nav-link ${activeMenu === "pengaturan_web" ? "active" : ""}`} onClick={() => { setActiveMenu("pengaturan_web"); setIsSidebarOpen(false); }}><i className="fas fa-globe"></i> <span>Pengaturan Web</span></a></li>
           
@@ -640,13 +751,13 @@ export default function DashboardBPH() {
               </div>
               
               <div className="col-12 col-md-4">
-                <div className="info-box">
+                <div className="info-box border-start border-4 border-success">
                   <div>
                     <small className="text-muted fw-bold d-block mb-1 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.75rem" }}>Saldo Kas Induk</small>
                     <h2 className="fw-bolder m-0 text-dark">{formatRp(saldoKas)}</h2>
-                    <span className="badge bg-light text-secondary border mt-2 px-2 py-1"><i className="fas fa-chart-line me-1"></i>Kas Aktif</span>
+                    <span className="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 mt-2 px-2 py-1"><i className="fas fa-chart-line me-1"></i>Kas Aktif</span>
                   </div>
-                  <div className="icon-circle"><i className="fas fa-wallet"></i></div>
+                  <div className="icon-circle bg-white shadow-sm border-0"><i className="fas fa-wallet text-success"></i></div>
                 </div>
               </div>
               
@@ -677,25 +788,10 @@ export default function DashboardBPH() {
                     <h6 className="fw-bold text-gray-300 mb-2 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.8rem", color: "#94a3b8" }}><i className="fas fa-eye me-2"></i>Visi Organisasi</h6>
                     <p className="mb-0 text-white opacity-90 fw-500" style={{ lineHeight: "1.6" }}>{webVisi || "Visi belum diatur"}</p>
                   </div>
-                  
-                  {/* --- PERBAIKAN TAMPILAN MISI UTAMA DI SINI --- */}
                   <div className="p-3 bg-white bg-opacity-10 rounded-4 border border-white border-opacity-10 backdrop-blur">
-                    <h6 className="fw-bold text-gray-300 mb-3 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.8rem", color: "#94a3b8" }}><i className="fas fa-bullseye me-2"></i>Misi Utama</h6>
-                    {webMisi ? (
-                      <ul className="list-unstyled mb-0">
-                        {webMisi.split('\n').filter(m => m.trim() !== '').map((misi, index) => (
-                          <li key={index} className="text-white opacity-90 fw-500 mb-2 d-flex align-items-start">
-                            <i className="fas fa-check-circle text-success mt-1 me-2" style={{fontSize: "0.8rem"}}></i>
-                            <span style={{ lineHeight: "1.5", fontSize: "0.95rem" }}>{misi}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="mb-0 text-white opacity-90 fw-500">Misi belum diatur</p>
-                    )}
+                    <h6 className="fw-bold text-gray-300 mb-2 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.8rem", color: "#94a3b8" }}><i className="fas fa-bullseye me-2"></i>Misi Utama</h6>
+                    <p className="mb-0 text-white opacity-90 fw-500 text-truncate" title={webMisi}>{webMisi ? webMisi.split('\n')[0] : "Misi belum diatur"}</p>
                   </div>
-                  {/* --- AKHIR PERBAIKAN TAMPILAN MISI --- */}
-
                 </div>
               </div>
             </div>
@@ -734,25 +830,43 @@ export default function DashboardBPH() {
             <h4 className="fw-bolder mb-4 text-dark">Surat Induk BPH</h4>
             <ul className="nav nav-pills mb-4 gap-2 bg-white p-2 rounded-pill shadow-sm d-inline-flex border">
               <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabSurat === "masuk" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("masuk")}>Surat Masuk</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabSurat === "keluar" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("keluar")}>Surat Keluar / SK</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabSurat === "keluar" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("keluar")}>Surat Keluar</button></li>
             </ul>
 
             {adminSubTabSurat === "masuk" && (
               <div className="card border-0 shadow-sm rounded-4 p-4">
-                <div className="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom">
+                <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 pb-2 border-bottom gap-2">
                   <span className="fw-bold text-dark fs-5">Data Surat Masuk BPH</span>
-                  <button className="btn btn-dark rounded-pill fw-bold px-4 shadow-sm" onClick={() => { setTipeSurat("Masuk"); setIsModalSuratOpen(true); }}><i className="fas fa-plus me-2"></i> Tambah Surat</button>
+                  <div className="d-flex gap-2">
+                    <input type="text" className="form-control form-control-sm rounded-pill px-3" style={{width: "200px"}} placeholder="🔍 Cari Perihal..." value={searchMasuk} onChange={(e) => setSearchMasuk(e.target.value)} />
+                    <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => exportToExcel(sortedMasuk, "Surat_Masuk_BPH", "Masuk")}><i className="fas fa-file-excel me-1"></i> Excel</button>
+                    
+                    <input type="file" className="d-none" id="ai-scan-masuk" accept=".pdf" onChange={(e) => handleAIScanSurat(e, "Masuk")} />
+                    <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById('ai-scan-masuk')?.click()} disabled={isAiLoading}>
+                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan AI</>}
+                    </button>
+                    
+                    <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataSurat(null); setTipeSurat("Masuk"); setIsModalSuratOpen(true); }}><i className="fas fa-plus me-1"></i> Tambah</button>
+                  </div>
                 </div>
                 <div className="table-responsive">
                   <table className="table table-hover align-middle text-nowrap border-top">
-                    <thead className="table-light"><tr><th className="py-3">No</th><th>Asal Instansi</th><th>Tgl Terima</th><th>Perihal</th><th>Dokumen</th><th>Aksi</th></tr></thead>
+                    <thead className="table-light"><tr><th className="py-3">No Surat</th><th>Asal Surat</th><th>Tgl Buat</th><th>Tgl Datang</th><th>Perihal</th><th>Keterangan</th><th>Dokumen</th><th>Aksi</th></tr></thead>
                     <tbody>
-                      {bphSuratMasuk.length === 0 ? <tr><td colSpan={6} className="text-center py-5 text-muted">Belum ada data surat masuk pusat</td></tr> : 
-                        bphSuratMasuk.map(s => (
+                      {sortedMasuk.length === 0 ? <tr><td colSpan={8} className="text-center py-5 text-muted">Data tidak ditemukan</td></tr> : 
+                        sortedMasuk.map(s => (
                           <tr key={s.id}>
-                            <td className="fw-bold text-secondary">{s.no}</td><td className="fw-bold text-dark">{s.asal || s.asalTujuan}</td><td>{s.tgl_datang || s.tgl_proses}</td><td>{s.hal}</td>
+                            <td className="fw-bold text-secondary">{s.no}</td>
+                            <td className="fw-bold text-dark">{s.asal || s.asalTujuan}</td>
+                            <td>{s.tgl_buat || "-"}</td>
+                            <td>{s.tgl_datang || s.tgl_proses || "-"}</td>
+                            <td className="text-truncate" style={{maxWidth: "200px"}} title={s.hal}>{s.hal}</td>
+                            <td className="text-truncate text-muted small" style={{maxWidth: "150px"}} title={s.ket}>{s.ket || "-"}</td>
                             <td>{s.link_drive ? <a href={s.link_drive} target="_blank" className="btn btn-sm btn-light border text-primary rounded-pill px-3"><i className="fab fa-google-drive me-1"></i> Buka</a> : <span className="text-muted small">-</span>}</td>
-                            <td><button className="btn btn-sm btn-outline-danger rounded-circle"><i className="fas fa-trash"></i></button></td>
+                            <td>
+                               <button className="btn btn-sm btn-outline-primary rounded-circle me-1" title="Edit" onClick={() => { setEditDataSurat(s); setTipeSurat("Masuk"); setIsModalSuratOpen(true); }}><i className="fas fa-edit"></i></button>
+                               <button className="btn btn-sm btn-outline-danger rounded-circle" title="Hapus" onClick={() => handleDeleteSurat(s.id, "Masuk")}><i className="fas fa-trash"></i></button>
+                            </td>
                           </tr>
                         ))
                       }
@@ -764,20 +878,38 @@ export default function DashboardBPH() {
 
             {adminSubTabSurat === "keluar" && (
               <div className="card border-0 shadow-sm rounded-4 p-4">
-                <div className="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom">
+                <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 pb-2 border-bottom gap-2">
                   <span className="fw-bold text-dark fs-5">Data Surat Keluar / SK</span>
-                  <button className="btn btn-dark rounded-pill fw-bold px-4 shadow-sm" onClick={() => { setTipeSurat("Keluar"); setIsModalSuratOpen(true); }}><i className="fas fa-plus me-2"></i> Buat Surat/SK</button>
+                  <div className="d-flex gap-2">
+                    <input type="text" className="form-control form-control-sm rounded-pill px-3" style={{width: "200px"}} placeholder="🔍 Cari Perihal..." value={searchKeluar} onChange={(e) => setSearchKeluar(e.target.value)} />
+                    <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => exportToExcel(sortedKeluar, "Surat_Keluar_BPH", "Keluar")}><i className="fas fa-file-excel me-1"></i> Excel</button>
+                    
+                    <input type="file" className="d-none" id="ai-scan-keluar" accept=".pdf" onChange={(e) => handleAIScanSurat(e, "Keluar")} />
+                    <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById('ai-scan-keluar')?.click()} disabled={isAiLoading}>
+                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan AI</>}
+                    </button>
+
+                    <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataSurat(null); setTipeSurat("Keluar"); setIsModalSuratOpen(true); }}><i className="fas fa-plus me-1"></i> Buat</button>
+                  </div>
                 </div>
                 <div className="table-responsive">
                   <table className="table table-hover align-middle text-nowrap border-top">
-                    <thead className="table-light"><tr><th className="py-3">No</th><th>Tujuan / Nama SK</th><th>Tgl Keluar</th><th>Perihal</th><th>Dokumen</th><th>Aksi</th></tr></thead>
+                    <thead className="table-light"><tr><th className="py-3">No Surat</th><th>Tujuan Surat</th><th>Tgl Buat</th><th>Tgl Kirim</th><th>Perihal</th><th>Keterangan</th><th>Dokumen</th><th>Aksi</th></tr></thead>
                     <tbody>
-                      {bphSuratKeluar.length === 0 ? <tr><td colSpan={6} className="text-center py-5 text-muted">Belum ada data surat keluar pusat</td></tr> : 
-                        bphSuratKeluar.map(s => (
+                      {sortedKeluar.length === 0 ? <tr><td colSpan={8} className="text-center py-5 text-muted">Data tidak ditemukan</td></tr> : 
+                        sortedKeluar.map(s => (
                           <tr key={s.id}>
-                            <td className="fw-bold text-secondary">{s.no}</td><td className="fw-bold text-dark">{s.tujuan || s.asalTujuan}</td><td>{s.tgl_kirim || s.tgl_proses}</td><td>{s.hal}</td>
+                            <td className="fw-bold text-secondary">{s.no}</td>
+                            <td className="fw-bold text-dark">{s.tujuan || s.asalTujuan}</td>
+                            <td>{s.tgl_buat || "-"}</td>
+                            <td>{s.tgl_kirim || s.tgl_proses || "-"}</td>
+                            <td className="text-truncate" style={{maxWidth: "200px"}} title={s.hal}>{s.hal}</td>
+                            <td className="text-truncate text-muted small" style={{maxWidth: "150px"}} title={s.ket}>{s.ket || "-"}</td>
                             <td>{s.link_drive ? <a href={s.link_drive} target="_blank" className="btn btn-sm btn-light border text-primary rounded-pill px-3"><i className="fab fa-google-drive me-1"></i> Buka</a> : <span className="text-muted small">-</span>}</td>
-                            <td><button className="btn btn-sm btn-outline-danger rounded-circle"><i className="fas fa-trash"></i></button></td>
+                            <td>
+                               <button className="btn btn-sm btn-outline-primary rounded-circle me-1" title="Edit" onClick={() => { setEditDataSurat(s); setTipeSurat("Keluar"); setIsModalSuratOpen(true); }}><i className="fas fa-edit"></i></button>
+                               <button className="btn btn-sm btn-outline-danger rounded-circle" title="Hapus" onClick={() => handleDeleteSurat(s.id, "Keluar")}><i className="fas fa-trash"></i></button>
+                            </td>
                           </tr>
                         ))
                       }
@@ -1548,8 +1680,8 @@ export default function DashboardBPH() {
 
       </div>
 
-      {/* MODAL UNTUK BPH */}
-      {isModalSuratOpen && <ModalTambahSurat kementerianName="bph" tipe={tipeSurat} onClose={() => setIsModalSuratOpen(false)} />}
+      {/* MODAL UNTUK BPH - Edit mode using initialData prop */}
+      {isModalSuratOpen && <ModalTambahSurat kementerianName="bph" tipe={tipeSurat} initialData={editDataSurat} onClose={() => { setIsModalSuratOpen(false); setEditDataSurat(null); }} />}
       {isModalKeuOpen && <ModalTambahKeuangan kementerianName="bph" kategori={kategoriKeu} onClose={() => setIsModalKeuOpen(false)} />}
       {isModalInvOpen && <ModalTambahInventaris kementerianName="bph" tipe={tipeInv} onClose={() => setIsModalInvOpen(false)} />}
 

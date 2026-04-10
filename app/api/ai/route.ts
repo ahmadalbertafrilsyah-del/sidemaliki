@@ -70,6 +70,23 @@ export async function POST(req: NextRequest) {
         2. Kelengkapan Komponen Surat
         3. Rekomendasi Perbaikan secara spesifik.`;
         break;
+      
+      case "parse_surat":
+        prompt = `Saya memiliki teks kasar hasil ekstraksi dari sebuah dokumen surat (PDF).
+        Tolong analisa dan ekstrak informasi berikut ke dalam format JSON murni TANPA markdown block (jangan gunakan \`\`\`json).
+  
+        Teks Kasar:
+        "${payload.teksSurat}"
+  
+        Jika ini surat MASUK, format JSON-nya:
+        { "no": "nomor surat", "asal": "nama instansi pengirim", "tgl_buat": "YYYY-MM-DD", "tgl_datang": "YYYY-MM-DD", "hal": "perihal surat", "ket": "keterangan singkat" }
+  
+        Jika ini surat KELUAR, format JSON-nya:
+        { "no": "nomor surat", "tujuan": "nama instansi tujuan", "tgl_buat": "YYYY-MM-DD", "tgl_kirim": "YYYY-MM-DD", "hal": "perihal surat", "ket": "keterangan singkat" }
+
+        Tipe surat yang diminta adalah: ${payload.tipeSurat}. 
+        Pastikan output HANYA JSON.`;
+        break;
 
       default:
         return NextResponse.json({ error: "Aksi AI tidak dikenali oleh sistem." }, { status: 400 });
