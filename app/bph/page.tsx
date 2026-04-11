@@ -9,11 +9,11 @@ import { PDFDocument } from "pdf-lib";
 import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import { Rnd } from "react-rnd";
+import Tesseract from "tesseract.js";
 
 // IMPORT KOMPONEN MODAL UNTUK BPH
 import ModalTambahSurat from "@/components/ModalTambahSurat";
 import ModalTambahKeuangan from "@/components/ModalTambahKeuangan";
-import ModalTambahInventaris from "@/components/ModalTambahInventaris";
 
 interface Kementerian { id: string; nama: string; email: string; password?: string; }
 interface Pengurus { nama: string; nim: string; jabatan: string; lembaga: string; }
@@ -40,10 +40,9 @@ export default function DashboardBPH() {
   const [bphSuratMasuk, setBphSuratMasuk] = useState<any[]>([]);
   const [bphSuratKeluar, setBphSuratKeluar] = useState<any[]>([]);
   const [bphKeuangan, setBphKeuangan] = useState<any[]>([]);
-  const [bphInventaris, setBphInventaris] = useState<any[]>([]);
 
   const [adminSubTabSurat, setAdminSubTabSurat] = useState("masuk"); 
-  const [adminSubTabKeu, setAdminSubTabKeu] = useState("bank"); 
+  const [adminSubTabKeu, setAdminSubTabKeu] = useState("dipa"); 
 
   const [isModalSuratOpen, setIsModalSuratOpen] = useState(false);
   const [tipeSurat, setTipeSurat] = useState("Masuk");
@@ -57,7 +56,6 @@ export default function DashboardBPH() {
   const [detailSuratMasuk, setDetailSuratMasuk] = useState<any[]>([]);
   const [detailSuratKeluar, setDetailSuratKeluar] = useState<any[]>([]);
   const [detailKeuangan, setDetailKeuangan] = useState<any[]>([]);
-  const [detailInventaris, setDetailInventaris] = useState<any[]>([]);
 
   const [webGrandDesign, setWebGrandDesign] = useState("");
   const [webVisi, setWebVisi] = useState("");
@@ -108,10 +106,20 @@ export default function DashboardBPH() {
   const [notulenJudul, setNotulenJudul] = useState("");
   const [notulenTempat, setNotulenTempat] = useState("");
 
+  // --- STATE UNTUK MODAL DETAIL DASHBOARD ---
+  const [dashboardModalContent, setDashboardModalContent] = useState<"surat" | "keuangan" | "kementerian" | "proker" | "pengurus" | null>(null);
+  const [semuaSuratMasuk, setSemuaSuratMasuk] = useState<any[]>([]);
+  const [semuaSuratKeluar, setSemuaSuratKeluar] = useState<any[]>([]);
+  const [semuaKeuangan, setSemuaKeuangan] = useState<any[]>([]);
+
   // --- FITUR BARU SURAT INDUK ---
   const [searchMasuk, setSearchMasuk] = useState("");
   const [searchKeluar, setSearchKeluar] = useState("");
   const [editDataSurat, setEditDataSurat] = useState<any>(null); // Untuk data pre-fill Edit/AI
+
+  // --- FITUR BARU KEUANGAN ---
+  const [editDataKeu, setEditDataKeu] = useState<any>(null);
+  const [activeKegiatan, setActiveKegiatan] = useState(""); // Untuk dropdown filter Kepanitiaan
 
   const userRole = typeof window !== 'undefined' ? localStorage.getItem("userRole") : "";
 
@@ -136,24 +144,48 @@ export default function DashboardBPH() {
     if (userRole !== "bph") return;
     const timer = setInterval(() => setCurrentTime(new Date().toLocaleTimeString("id-ID")), 1000);
 
-    const unsubSuratAll = onSnapshot(collection(db, "surat_masuk"), snap => setTotalSurat(snap.size));
+    const unsubSuratMasukAll = onSnapshot(collection(db, "surat_masuk"), snap => {
+      setTotalSurat(prev => prev + snap.size);
+      setSemuaSuratMasuk(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+    
+    const unsubSuratKeluarAll = onSnapshot(collection(db, "surat_keluar"), snap => {
+      setSemuaSuratKeluar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
     const unsubKeuanganAll = onSnapshot(collection(db, "keuangan"), snap => {
       let total = 0;
+      let allKeuData: any[] = [];
       snap.forEach(doc => {
         const d = doc.data();
+        allKeuData.push({ id: doc.id, ...d });
         if (d.jenis === "Masuk") total += Number(d.nom) || 0;
         if (d.jenis === "Keluar") total -= Number(d.nom) || 0;
       });
       setSaldoKas(total);
+      setSemuaKeuangan(allKeuData.sort((a:any, b:any) => new Date(b.tgl).getTime() - new Date(a.tgl).getTime()));
     });
+
     const unsubKemAll = onSnapshot(collection(db, "kementerian"), snap => {
       setListKementerian(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Kementerian[]);
     });
 
     const unsubBphSM = onSnapshot(query(collection(db, "surat_masuk"), where("scope", "==", "bph")), snap => setBphSuratMasuk(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
     const unsubBphSK = onSnapshot(query(collection(db, "surat_keluar"), where("scope", "==", "bph")), snap => setBphSuratKeluar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
-    const unsubBphKeu = onSnapshot(query(collection(db, "keuangan"), where("scope", "==", "bph")), snap => setBphKeuangan(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a:any, b:any) => new Date(a.tgl).getTime() - new Date(b.tgl).getTime())));
-    const unsubBphInv = onSnapshot(query(collection(db, "inventaris"), where("scope", "==", "bph")), snap => setBphInventaris(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
+    
+    // Sortir Keuangan BPH berdasar Tanggal paling lama ke baru agar Saldo Akhir berurutan logic-nya
+    const unsubBphKeu = onSnapshot(query(collection(db, "keuangan"), where("scope", "==", "bph")), snap => {
+        const sortedData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a:any, b:any) => {
+            const parseDate = (d:string) => d.includes('/') ? new Date(d.split('/').reverse().join('-')).getTime() : new Date(d).getTime();
+            return parseDate(a.tgl) - parseDate(b.tgl);
+        });
+        setBphKeuangan(sortedData);
+        
+        // Auto set dropdown Kepanitiaan jika belum ada
+        const listKepanitiaan = Array.from(new Set(sortedData.filter((k:any) => k.cat === "Kepanitiaan" && k.nama_kegiatan).map((k:any) => k.nama_kegiatan)));
+        if(listKepanitiaan.length > 0 && !activeKegiatan) setActiveKegiatan(listKepanitiaan[0] as string);
+    });
+
     const unsubProker = onSnapshot(query(collection(db, "program_kerja"), where("scope", "==", "bph")), snap => setDaftarProker(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Proker[]));
 
     const unsubWeb = onSnapshot(doc(db, "pengaturan", "beranda"), (docSnap) => {
@@ -176,20 +208,19 @@ export default function DashboardBPH() {
       }
     });
 
-    return () => { clearInterval(timer); unsubSuratAll(); unsubKeuanganAll(); unsubKemAll(); unsubBphSM(); unsubBphSK(); unsubBphKeu(); unsubBphInv(); unsubProker(); unsubWeb(); };
-  }, [userRole]);
+    return () => { clearInterval(timer); unsubSuratMasukAll(); unsubSuratKeluarAll(); unsubKeuanganAll(); unsubKemAll(); unsubBphSM(); unsubBphSK(); unsubBphKeu(); unsubProker(); unsubWeb(); };
+  }, [userRole, activeKegiatan]);
 
   useEffect(() => {
     if (!selectedKem) return;
     const unsubSM = onSnapshot(query(collection(db, "surat_masuk"), where("scope", "==", selectedKem.id)), snap => setDetailSuratMasuk(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
     const unsubSK = onSnapshot(query(collection(db, "surat_keluar"), where("scope", "==", selectedKem.id)), snap => setDetailSuratKeluar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
     const unsubKeu = onSnapshot(query(collection(db, "keuangan"), where("scope", "==", selectedKem.id)), snap => setDetailKeuangan(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a:any, b:any) => new Date(a.tgl).getTime() - new Date(b.tgl).getTime())));
-    const unsubInv = onSnapshot(query(collection(db, "inventaris"), where("scope", "==", selectedKem.id)), snap => setDetailInventaris(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
-    return () => { unsubSM(); unsubSK(); unsubKeu(); unsubInv(); };
+    return () => { unsubSM(); unsubSK(); unsubKeu(); };
   }, [selectedKem]);
 
 
-  // --- LOGIKA SURAT INDUK (SORTIR, FILTER, DELETE, EXPORT, AI SCAN) ---
+  // --- LOGIKA SURAT INDUK (SORTIR, FILTER, DELETE, EXPORT, OCR SCAN) ---
 
   const sortedMasuk = [...bphSuratMasuk]
     .filter(s => s.hal?.toLowerCase().includes(searchMasuk.toLowerCase()))
@@ -217,27 +248,68 @@ export default function DashboardBPH() {
     }
   };
 
+  const handleDeleteKeuangan = async (id: string) => {
+    if (confirm(`Yakin ingin menghapus data transaksi ini?`)) {
+      await deleteDoc(doc(db, "keuangan", id));
+    }
+  };
+
   const exportToExcel = (data: any[], filename: string, tipe: string) => {
-    const formattedData = data.map(s => {
+    const formattedData = data.map((s, i) => {
       if (tipe === "Masuk") {
-        return { "Nomor Surat": s.no, "Asal Surat": s.asal || s.asalTujuan, "Tgl Buat": s.tgl_buat, "Tgl Datang": s.tgl_datang || s.tgl_proses, "Perihal": s.hal, "Keterangan": s.ket || "-" };
+        return { "No": i+1, "Nomor Surat": s.no, "Asal Surat": s.asal || s.asalTujuan, "Tgl Buat": s.tgl_buat, "Tgl Datang": s.tgl_datang || s.tgl_proses, "Perihal": s.hal, "Keterangan": s.ket || "-" };
       } else {
-        return { "Nomor Surat": s.no, "Tujuan Surat": s.tujuan || s.asalTujuan, "Tgl Buat": s.tgl_buat, "Tgl Kirim": s.tgl_kirim || s.tgl_proses, "Perihal": s.hal, "Keterangan": s.ket || "-" };
+        return { "No": i+1, "Nomor Surat": s.no, "Tujuan Surat": s.tujuan || s.asalTujuan, "Tgl Buat": s.tgl_buat, "Tgl Kirim": s.tgl_kirim || s.tgl_proses, "Perihal": s.hal, "Keterangan": s.ket || "-" };
       }
     });
     const ws = XLSX.utils.json_to_sheet(formattedData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Data Surat");
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/octet-stream' });
-    saveAs(blob, `${filename}.xlsx`);
+    XLSX.writeFile(wb, `${filename}.xlsx`);
   };
 
+  const exportKeuanganToExcel = (kategoriStr: string) => {
+    let rawData = bphKeuangan.filter(k => k.cat === kategoriStr);
+    let formattedData;
+    
+    if (kategoriStr === "Kepanitiaan") {
+       rawData = rawData.filter(k => k.nama_kegiatan === activeKegiatan);
+       formattedData = rawData.map((k, i) => ({
+          "No": i+1, "No Nota": k.no_nota || "-", "Tanggal": k.tgl, "Nama Barang": k.nama_barang || k.uraian,
+          "Volume": k.vol || 1, "Satuan Vol": k.sat_vol || "-", "Satuan Harga": Number(k.sat_hrg || k.nom), "Jumlah": Number(k.jumlah || k.nom)
+       }));
+    } else {
+       let currSaldo = 0;
+       formattedData = rawData.map((k, i) => {
+          const debit = k.jenis === "Masuk" ? Number(k.nom) : 0;
+          const kredit = k.jenis === "Keluar" ? Number(k.nom) : 0;
+          currSaldo += (debit - kredit);
+          return { "No": i+1, "Tanggal": k.tgl, "Kegiatan": k.uraian, "Debit": debit, "Kredit": kredit, "Saldo Akhir": currSaldo };
+       });
+    }
+
+    const ws = XLSX.utils.json_to_sheet(formattedData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `Laporan_${kategoriStr}`);
+    XLSX.writeFile(wb, `Laporan_Keuangan_${kategoriStr}_BPH.xlsx`);
+  };
+
+  // --- FUNGSI TAMBAH KEGIATAN BARU ---
+  const handleTambahKegiatan = () => {
+    const namaBaru = prompt("Masukkan Nama Kepanitiaan/Kegiatan Baru:\n(Contoh: Ospek Universitas 2026)");
+    if (namaBaru && namaBaru.trim() !== "") {
+      setActiveKegiatan(namaBaru.trim());
+    }
+  };
+
+  // FUNGSI BARU MENGGUNAKAN TESSERACT.JS UNTUK SURAT
   const handleAIScanSurat = async (e: React.ChangeEvent<HTMLInputElement>, tipe: string) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsAiLoading(true);
+    setEditDataSurat(null);
+
     try {
       const pdfjsLib = await loadPdfjsLib();
       if (!pdfjsLib) throw new Error("Gagal memuat pustaka PDF.js");
@@ -246,46 +318,145 @@ export default function DashboardBPH() {
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let fullText = "";
       
-      // Batasi scan maksimal 2 halaman awal untuk kecepatan & efisiensi
       for (let i = 1; i <= Math.min(pdf.numPages, 2); i++) {
         const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        fullText += textContent.items.map((item: any) => item.str).join(" ") + "\n";
+        const scale = 2.0; 
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        if (!context) continue;
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        await page.render({ canvasContext: context, viewport: viewport } as any).promise;
+        const imageUrl = canvas.toDataURL("image/png");
+        
+        const { data: { text } } = await Tesseract.recognize(imageUrl, 'ind');
+        fullText += text + "\n";
       }
 
-      // Memanggil AI Backend untuk mengekstrak field
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          action: "parse_surat", // PASTIKAN backend Anda menangani action 'parse_surat'
-          payload: { teksSurat: fullText, tipeSurat: tipe, poPpta: poPptaFileName } 
-        })
-      });
-      
-      const data = await response.json();
-      if (response.ok) {
-        try {
-          const rawJson = data.result.replace(/```json/g, '').replace(/```/g, '').trim();
-          const parsedData = JSON.parse(rawJson);
-          setEditDataSurat(parsedData);
-          setTipeSurat(tipe);
-          setIsModalSuratOpen(true);
-        } catch(err) {
-          alert("Gagal membaca output AI. Pastikan AI backend merespons dengan format JSON murni.");
-        }
-      } else {
-        alert(`AI Error: ${data.error}`);
+      let extractedData: any = { hal: "", no: "", ket: "Otomatis via OCR Scan" };
+      const noMatch = fullText.match(/(?:Nomor|No)[.\s]*:[ \t]*([^\n]+)/i);
+      if (noMatch && noMatch[1]) extractedData.no = noMatch[1].trim();
+
+      const halMatch = fullText.match(/(?:Hal|Perihal)[.\s]*:[ \t]*([^\n]+)/i);
+      if (halMatch && halMatch[1]) extractedData.hal = halMatch[1].trim();
+
+      if (tipe === "Keluar") {
+         const tujuanMatch = fullText.match(/Kepada\s*Yth\.?[\s\S]*?([^\n]+)/i);
+         if (tujuanMatch && tujuanMatch[1]) extractedData.tujuan = tujuanMatch[1].trim();
+      } else if (tipe === "Masuk") {
+        const lines = fullText.split('\n').filter(line => line.trim() !== '');
+        if (lines.length > 0) extractedData.asal = lines[0].trim(); 
       }
+
+      if (!extractedData.no && !extractedData.hal) alert("Teks berhasil dipindai OCR, tetapi format surat tidak dikenali.");
+      
+      setEditDataSurat(extractedData);
+      setTipeSurat(tipe);
+      setIsModalSuratOpen(true);
+
     } catch (error: any) {
-      console.error("Scan AI Error:", error);
-      alert(`Gagal memindai file: ${error.message}`);
+      alert(`Gagal memindai dokumen dengan OCR: ${error.message}`);
     } finally {
       setIsAiLoading(false);
-      e.target.value = ""; // Reset input file
+      e.target.value = ""; 
     }
   };
 
+  // FUNGSI BARU MENGGUNAKAN TESSERACT.JS UNTUK NOTA KEUANGAN
+  const handleAIScanKeuangan = async (e: React.ChangeEvent<HTMLInputElement>, kategoriStr: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsAiLoading(true);
+    setEditDataKeu(null);
+
+    try {
+      const pdfjsLib = await loadPdfjsLib();
+      if (!pdfjsLib) throw new Error("Gagal memuat pustaka PDF.js");
+
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const page = await pdf.getPage(1);
+      
+      const scale = 2.0; 
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Canvas tidak didukung");
+      canvas.height = viewport.height;
+      canvas.width = viewport.width;
+      
+      await page.render({ canvasContext: context, viewport: viewport } as any).promise;
+      const imageUrl = canvas.toDataURL("image/png");
+
+      const { data: { text } } = await Tesseract.recognize(imageUrl, 'ind');
+      console.log("OCR Nota:", text);
+
+      let extractedData: any = { uraian: "Hasil Scan Nota", nom: 0, tgl: "", ket: "Otomatis via OCR" };
+      
+      // Ambil angka terbesar yang ada "Rp" atau titik/koma
+      const nomMatch = text.match(/(?:Total|Jumlah|Rp)[\s\S]*?([0-9.,]+)/i);
+      if (nomMatch && nomMatch[1]) extractedData.nom = nomMatch[1].replace(/\D/g, '');
+
+      // Ambil Tanggal
+      const tglMatch = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/);
+      if (tglMatch) extractedData.tgl = tglMatch[0].replace(/-/g, '/');
+
+      // Setup Data Khusus jika Kepanitiaan
+      if (kategoriStr === "Kepanitiaan") {
+         extractedData = { 
+            ...extractedData, 
+            no_nota: `NOTA-${Math.floor(Math.random()*1000)}`, 
+            nama_barang: "Item Nota OCR", 
+            vol: 1, 
+            sat_vol: "Pcs", 
+            sat_hrg: extractedData.nom, 
+            jumlah: extractedData.nom,
+            nama_kegiatan: activeKegiatan || "Kegiatan Baru"
+         };
+         extractedData.jenis = "Keluar"; // Default nota kepanitiaan
+      } else {
+         extractedData.jenis = "Keluar"; // Default DIPA/Intern/Extern biasanya mencatat bukti pengeluaran
+      }
+
+      setEditDataKeu(extractedData);
+      setKategoriKeu(kategoriStr);
+      setIsModalKeuOpen(true);
+
+    } catch (error: any) {
+      alert(`Gagal memindai nota dengan OCR: ${error.message}`);
+    } finally {
+      setIsAiLoading(false);
+      e.target.value = ""; 
+    }
+  };
+
+  const handleExtractAndCheck = async () => {
+    const fileInput = document.getElementById('upload-smartletter') as HTMLInputElement;
+    const file = fileInput?.files?.[0];
+    if (!file) return alert("Upload file PDF surat terlebih dahulu!");
+
+    setIsAiLoading(true);
+    setAiResponse("");
+    try {
+      const pdfjsLib = await loadPdfjsLib();
+      if (!pdfjsLib) throw new Error("Gagal memuat pustaka PDF.js");
+
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = "";
+      const page = await pdf.getPage(1);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map((item: any) => item.str).join(" ");
+      fullText += pageText + "\n";
+      triggerAiProcess("smartletter", fullText);
+    } catch (error: any) {
+      console.error("Error Ekstraksi:", error);
+      alert(`Gagal membaca teks PDF: ${error.message}`);
+      setIsAiLoading(false);
+    }
+  };
 
   // Handler Gambar Interaktif
   const handleTtdKetuaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -487,32 +658,6 @@ export default function DashboardBPH() {
     }
   };
 
-  const handleExtractAndCheck = async () => {
-    const fileInput = document.getElementById('upload-smartletter') as HTMLInputElement;
-    const file = fileInput?.files?.[0];
-    if (!file) return alert("Upload file PDF surat terlebih dahulu!");
-
-    setIsAiLoading(true);
-    setAiResponse("");
-    try {
-      const pdfjsLib = await loadPdfjsLib();
-      if (!pdfjsLib) throw new Error("Gagal memuat pustaka PDF.js");
-
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = "";
-      const page = await pdf.getPage(1);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map((item: any) => item.str).join(" ");
-      fullText += pageText + "\n";
-      triggerAiProcess("smartletter", fullText);
-    } catch (error: any) {
-      console.error("Error Ekstraksi:", error);
-      alert(`Gagal membaca teks PDF: ${error.message}`);
-      setIsAiLoading(false);
-    }
-  };
-
   const handleProcessSplitPDF = async () => {
     if (!splitPdfFile) return alert("Upload file PDF master terlebih dahulu!");
     if (!pdfSplitNames) return alert("Masukkan daftar nama file terlebih dahulu!");
@@ -605,6 +750,203 @@ export default function DashboardBPH() {
     return acc;
   }, {} as Record<string, Pengurus[]>);
 
+  // --- KUMPULAN MODAL RENDERER ---
+  const renderDashboardModal = () => {
+    if (!dashboardModalContent) return null;
+
+    let content = null;
+
+    if (dashboardModalContent === "surat") {
+      content = (
+        <div>
+          <h5 className="fw-bold mb-3 border-bottom pb-2">Rincian Total Surat ({semuaSuratMasuk.length + semuaSuratKeluar.length})</h5>
+          <div className="row g-3 mb-4">
+            <div className="col-6">
+              <div className="p-3 bg-light rounded-3 border text-center">
+                <div className="fs-3 fw-bold text-dark">{semuaSuratMasuk.length}</div>
+                <div className="small text-muted text-uppercase">Surat Masuk</div>
+              </div>
+            </div>
+            <div className="col-6">
+              <div className="p-3 bg-light rounded-3 border text-center">
+                <div className="fs-3 fw-bold text-dark">{semuaSuratKeluar.length}</div>
+                <div className="small text-muted text-uppercase">Surat Keluar</div>
+              </div>
+            </div>
+          </div>
+          
+          <h6 className="fw-bold text-secondary mb-2">5 Surat Terbaru:</h6>
+          <ul className="list-group list-group-flush small">
+             {[...semuaSuratMasuk, ...semuaSuratKeluar]
+                .sort((a, b) => new Date(b.tgl_proses || b.tgl_buat).getTime() - new Date(a.tgl_proses || a.tgl_buat).getTime())
+                .slice(0, 5)
+                .map((s, idx) => (
+                  <li key={idx} className="list-group-item px-0 d-flex justify-content-between align-items-center">
+                    <div className="text-truncate" style={{maxWidth: "70%"}}>
+                      <span className={`badge me-2 ${s.asal ? 'bg-primary' : 'bg-warning text-dark'}`}>{s.asal ? 'Masuk' : 'Keluar'}</span>
+                      {s.hal}
+                    </div>
+                    <span className="text-muted" style={{fontSize: "0.75rem"}}>{s.tgl_proses || s.tgl_buat}</span>
+                  </li>
+                ))
+             }
+          </ul>
+        </div>
+      );
+    } else if (dashboardModalContent === "keuangan") {
+      let totalPemasukan = 0;
+      let totalPengeluaran = 0;
+      semuaKeuangan.forEach(k => {
+        if(k.jenis === "Masuk") totalPemasukan += Number(k.nom);
+        if(k.jenis === "Keluar") totalPengeluaran += Number(k.nom);
+      });
+
+      content = (
+        <div>
+          <h5 className="fw-bold mb-3 border-bottom pb-2">Rincian Saldo Kas</h5>
+          <div className="p-4 bg-dark text-white rounded-4 shadow-sm mb-4 text-center position-relative overflow-hidden">
+             <div className="position-relative" style={{zIndex: 2}}>
+                <div className="small opacity-75 mb-1 text-uppercase letter-spacing-1">Total Saldo Aktif</div>
+                <h2 className="fw-bolder mb-0">{formatRp(saldoKas)}</h2>
+             </div>
+             <i className="fas fa-wallet fa-5x position-absolute opacity-10" style={{ right: "-10px", bottom: "-20px" }}></i>
+          </div>
+
+          <div className="row g-3 mb-4">
+            <div className="col-6">
+              <div className="p-3 bg-success bg-opacity-10 rounded-3 border border-success border-opacity-25">
+                <div className="small text-success fw-bold mb-1"><i className="fas fa-arrow-down me-1"></i>Pemasukan</div>
+                <div className="fw-bold text-dark">{formatRp(totalPemasukan)}</div>
+              </div>
+            </div>
+            <div className="col-6">
+              <div className="p-3 bg-danger bg-opacity-10 rounded-3 border border-danger border-opacity-25">
+                <div className="small text-danger fw-bold mb-1"><i className="fas fa-arrow-up me-1"></i>Pengeluaran</div>
+                <div className="fw-bold text-dark">{formatRp(totalPengeluaran)}</div>
+              </div>
+            </div>
+          </div>
+
+          <h6 className="fw-bold text-secondary mb-2">Riwayat Transaksi Terakhir:</h6>
+          <div className="table-responsive">
+            <table className="table table-sm align-middle text-nowrap">
+              <tbody>
+                {semuaKeuangan.slice(0, 5).map((k, idx) => (
+                  <tr key={idx}>
+                    <td className="text-muted small" style={{width: "80px"}}>{k.tgl}</td>
+                    <td className="text-truncate text-dark fw-500" style={{maxWidth: "150px"}}>{k.uraian}</td>
+                    <td className={`text-end fw-bold ${k.jenis === 'Masuk' ? 'text-success' : 'text-danger'}`}>
+                      {k.jenis === 'Masuk' ? '+' : '-'}{formatRp(k.nom)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    } else if (dashboardModalContent === "kementerian") {
+      content = (
+        <div>
+          <h5 className="fw-bold mb-3 border-bottom pb-2">Status Kementerian Terdaftar</h5>
+          <div className="row g-3">
+             {listKementerian.length === 0 ? <p className="text-muted small">Belum ada kementerian yang terdaftar.</p> : 
+               listKementerian.map((kem, idx) => {
+                 // Hitung jumlah pengurus per kementerian berdasarkan excel
+                 const jmlPengurus = dataPengurus.filter(p => p.lembaga.toLowerCase().includes(kem.nama.toLowerCase()) || kem.nama.toLowerCase().includes(p.lembaga.toLowerCase())).length;
+                 
+                 return (
+                  <div className="col-12" key={idx}>
+                    <div className="d-flex align-items-center p-3 bg-light border rounded-3 justify-content-between cursor-pointer hover-elevate" onClick={() => {setDashboardModalContent(null); handleCekData(kem);}}>
+                       <div className="d-flex align-items-center">
+                         <div className="bg-dark text-white rounded-circle d-flex align-items-center justify-content-center me-3 shadow-sm" style={{width: "40px", height: "40px"}}>
+                            {kem.nama.charAt(0).toUpperCase()}
+                         </div>
+                         <div>
+                           <div className="fw-bold text-dark">{kem.nama}</div>
+                           <div className="small text-muted">{kem.email}</div>
+                         </div>
+                       </div>
+                       <div className="text-end">
+                         <span className="badge bg-secondary rounded-pill px-3 py-2"><i className="fas fa-users me-1"></i> {jmlPengurus} Anggota</span>
+                       </div>
+                    </div>
+                  </div>
+                 )
+               })
+             }
+          </div>
+        </div>
+      );
+    } else if (dashboardModalContent === "proker") {
+      content = (
+        <div>
+          <h5 className="fw-bold mb-3 border-bottom pb-2">Fokus Program Kerja BPH</h5>
+          <p className="text-dark bg-light p-3 rounded-3 border lh-lg mb-4" style={{fontSize: "0.95rem"}}>
+            {webProker || "Belum ada catatan fokus program kerja yang diatur di Pengaturan Web."}
+          </p>
+
+          <h6 className="fw-bold text-secondary mb-3">Daftar Proker Terencana:</h6>
+          {daftarProker.length === 0 ? <p className="text-muted small">Belum ada proker ditambahkan ke kalender.</p> : 
+            <div className="row g-3">
+              {daftarProker.map((p, idx) => (
+                <div className="col-12" key={idx}>
+                  <div className="card shadow-sm border-0 border-start border-4 border-dark bg-light">
+                    <div className="card-body py-3 px-4">
+                      <div className="d-flex justify-content-between align-items-start mb-2">
+                         <h6 className="fw-bold m-0 text-dark">{p.nama}</h6>
+                         <span className="badge bg-white text-dark border shadow-sm">{p.tgl}</span>
+                      </div>
+                      <p className="small text-muted mb-2 lh-base">{p.tujuan}</p>
+                      <div className="d-flex gap-2 mt-2">
+                        <span className="badge bg-dark bg-opacity-10 text-dark border-0 px-2 py-1" style={{fontSize: "0.7rem"}}><i className="fas fa-bullseye me-1 text-primary"></i>{p.sasaran}</span>
+                        <span className="badge bg-success bg-opacity-10 text-success border-0 px-2 py-1" style={{fontSize: "0.7rem"}}><i className="fas fa-chart-line me-1"></i>KPI: {p.kpi}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          }
+        </div>
+      );
+    } else if (dashboardModalContent === "pengurus") {
+      content = (
+        <div>
+          <h5 className="fw-bold mb-3 border-bottom pb-2">Status Keaktifan Pengurus ({dataPengurus.length})</h5>
+          <div className="progress mb-4" style={{height: "8px"}}>
+             <div className="progress-bar bg-dark" role="progressbar" style={{width: "100%"}}></div>
+          </div>
+
+          <div className="row g-3">
+             {Object.entries(groupedPengurus).map(([lembaga, members], idx) => (
+               <div className="col-12" key={idx}>
+                 <div className="p-3 border rounded-3 bg-light d-flex justify-content-between align-items-center">
+                    <span className="fw-bold text-dark text-uppercase" style={{fontSize: "0.85rem", letterSpacing: "0.5px"}}>{lembaga}</span>
+                    <span className="badge bg-dark rounded-pill px-3">{members.length} Orang</span>
+                 </div>
+               </div>
+             ))}
+             {dataPengurus.length === 0 && <p className="text-muted small w-100 text-center py-4">Data pengurus belum disinkronisasi.</p>}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="modal-backdrop" style={{position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(15,23,42,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(5px)"}}>
+        <div className="bg-white rounded-4 shadow-lg w-100 overflow-hidden animate-fade-in-up" style={{maxWidth: "600px", maxHeight: "85vh", display: "flex", flexDirection: "column"}}>
+          <div className="p-4 overflow-y-auto" style={{flex: 1}}>
+             {content}
+          </div>
+          <div className="p-3 bg-light border-top text-end">
+             <button className="btn btn-dark rounded-pill px-4 fw-bold" onClick={() => setDashboardModalContent(null)}>Tutup Panel</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div>
       <style>{`
@@ -636,7 +978,7 @@ export default function DashboardBPH() {
         .main-header { position: fixed; top: 0; left: 280px; right: 0; height: 70px; background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; z-index: 1000; transition: 0.4s; border-bottom: 1px solid var(--sidebar-border); }
         .content-wrapper { margin-top: 70px; margin-left: 280px; padding: 30px; transition: 0.4s; min-height: 100vh; }
         
-        .info-box { background: var(--card-bg); border-radius: 20px; padding: 25px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04); border: 1px solid var(--sidebar-border); transition: all 0.3s ease; }
+        .info-box { background: var(--card-bg); border-radius: 20px; padding: 25px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04); border: 1px solid var(--sidebar-border); transition: all 0.3s ease; cursor: pointer; }
         .info-box:hover { transform: translateY(-4px); box-shadow: 0 12px 25px rgba(15, 23, 42, 0.08); border-color: #cbd5e1; }
         .info-box .icon-circle { width: 55px; height: 55px; border-radius: 16px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; color: var(--text-dark); background: #f1f5f9; transition: 0.3s ease; border: 1px solid #e2e8f0; }
         .info-box:hover .icon-circle { background: var(--text-dark); color: #ffffff; transform: scale(1.05) rotate(5deg); }
@@ -668,7 +1010,12 @@ export default function DashboardBPH() {
         .pdf-preview-container { position: relative; display: inline-block; width: 100%; max-width: 700px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; background: #f8fafc; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
         .pdf-preview-img { width: 100%; height: auto; display: block; user-select: none; }
         .draggable-img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; border: 1px dashed #3b82f6; background: rgba(59, 130, 246, 0.1); }
+        
+        .cursor-pointer { cursor: pointer; }
       `}</style>
+
+      {/* RENDER MODAL DASHBOARD JIKA ADA */}
+      {renderDashboardModal()}
 
       <aside className={`sidebar ${isSidebarOpen ? "active" : ""}`}>
         <div className="sidebar-brand">
@@ -685,7 +1032,6 @@ export default function DashboardBPH() {
           <li className="sidebar-heading">Administrasi Induk</li>
           <li><a className={`nav-link ${activeMenu === "admin_surat" ? "active" : ""}`} onClick={() => { setActiveMenu("admin_surat"); setIsSidebarOpen(false); }}><i className="fas fa-envelope"></i> <span>Surat Induk</span></a></li>
           <li><a className={`nav-link ${activeMenu === "admin_keuangan" ? "active" : ""}`} onClick={() => { setActiveMenu("admin_keuangan"); setIsSidebarOpen(false); }}><i className="fas fa-wallet"></i> <span>Keuangan Pusat</span></a></li>
-          <li><a className={`nav-link ${activeMenu === "admin_inventaris" ? "active" : ""}`} onClick={() => { setActiveMenu("admin_inventaris"); setIsSidebarOpen(false); }}><i className="fas fa-box"></i> <span>Inventaris DEMA</span></a></li>
           
           <li className="sidebar-heading">Data Organisasi</li>
           <li><a className={`nav-link ${activeMenu === "kepengurusan" ? "active" : ""}`} onClick={() => { setActiveMenu("kepengurusan"); setIsSidebarOpen(false); }}><i className="fas fa-sitemap"></i> <span>Susunan Pengurus</span></a></li>
@@ -731,7 +1077,7 @@ export default function DashboardBPH() {
 
             <div className="row g-4 mb-4">
               <div className="col-12 col-md-4">
-                <div className="info-box">
+                <div className="info-box" onClick={() => setDashboardModalContent("surat")}>
                   <div>
                     <small className="text-muted fw-bold d-block mb-1 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.75rem" }}>Total Surat</small>
                     <h2 className="fw-bolder m-0 text-dark">{totalSurat}</h2>
@@ -742,7 +1088,7 @@ export default function DashboardBPH() {
               </div>
               
               <div className="col-12 col-md-4">
-                <div className="info-box border-start border-4 border-success">
+                <div className="info-box border-start border-4 border-success" onClick={() => setDashboardModalContent("keuangan")}>
                   <div>
                     <small className="text-muted fw-bold d-block mb-1 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.75rem" }}>Saldo Kas Induk</small>
                     <h2 className="fw-bolder m-0 text-dark">{formatRp(saldoKas)}</h2>
@@ -753,7 +1099,7 @@ export default function DashboardBPH() {
               </div>
               
               <div className="col-12 col-md-4">
-                <div className="info-box">
+                <div className="info-box" onClick={() => setDashboardModalContent("kementerian")}>
                   <div>
                     <small className="text-muted fw-bold d-block mb-1 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.75rem" }}>Kementerian</small>
                     <h2 className="fw-bolder m-0 text-dark">{listKementerian.length}</h2>
@@ -779,17 +1125,30 @@ export default function DashboardBPH() {
                     <h6 className="fw-bold text-gray-300 mb-2 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.8rem", color: "#94a3b8" }}><i className="fas fa-eye me-2"></i>Visi Organisasi</h6>
                     <p className="mb-0 text-white opacity-90 fw-500" style={{ lineHeight: "1.6" }}>{webVisi || "Visi belum diatur"}</p>
                   </div>
+                  
                   <div className="p-3 bg-white bg-opacity-10 rounded-4 border border-white border-opacity-10 backdrop-blur">
-                    <h6 className="fw-bold text-gray-300 mb-2 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.8rem", color: "#94a3b8" }}><i className="fas fa-bullseye me-2"></i>Misi Utama</h6>
-                    <p className="mb-0 text-white opacity-90 fw-500 text-truncate" title={webMisi}>{webMisi ? webMisi.split('\n')[0] : "Misi belum diatur"}</p>
+                    <h6 className="fw-bold text-gray-300 mb-3 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.8rem", color: "#94a3b8" }}><i className="fas fa-bullseye me-2"></i>Misi Utama</h6>
+                    {webMisi ? (
+                      <ul className="list-unstyled mb-0">
+                        {webMisi.split('\n').filter(m => m.trim() !== '').map((misi, index) => (
+                          <li key={index} className="text-white opacity-90 fw-500 mb-2 d-flex align-items-start">
+                            <i className="fas fa-check-circle text-success mt-1 me-2" style={{fontSize: "0.8rem"}}></i>
+                            <span style={{ lineHeight: "1.5", fontSize: "0.95rem" }}>{misi}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mb-0 text-white opacity-90 fw-500">Misi belum diatur</p>
+                    )}
                   </div>
+
                 </div>
               </div>
             </div>
 
             <div className="row g-4 mt-1">
               <div className="col-md-6">
-                <div className="card border-0 shadow-sm rounded-4 p-4 h-100 bg-white hover-elevate">
+                <div className="card border-0 shadow-sm rounded-4 p-4 h-100 bg-white hover-elevate cursor-pointer" onClick={() => setDashboardModalContent("proker")}>
                   <div className="d-flex align-items-start">
                     <div className="bg-slate-100 text-slate-600 rounded-4 p-3 me-4 border bg-light"><i className="fas fa-calendar-check fa-2x text-secondary"></i></div>
                     <div>
@@ -800,7 +1159,7 @@ export default function DashboardBPH() {
                 </div>
               </div>
               <div className="col-md-6">
-                <div className="card border-0 shadow-sm rounded-4 p-4 h-100 bg-white hover-elevate">
+                <div className="card border-0 shadow-sm rounded-4 p-4 h-100 bg-white hover-elevate cursor-pointer" onClick={() => setDashboardModalContent("pengurus")}>
                   <div className="d-flex align-items-start">
                     <div className="bg-slate-100 text-slate-600 rounded-4 p-3 me-4 border bg-light"><i className="fas fa-sitemap fa-2x text-secondary"></i></div>
                     <div>
@@ -821,7 +1180,7 @@ export default function DashboardBPH() {
             <h4 className="fw-bolder mb-4 text-dark">Surat Induk BPH</h4>
             <ul className="nav nav-pills mb-4 gap-2 bg-white p-2 rounded-pill shadow-sm d-inline-flex border">
               <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabSurat === "masuk" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("masuk")}>Surat Masuk</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabSurat === "keluar" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("keluar")}>Surat Keluar</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabSurat === "keluar" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("keluar")}>Surat Keluar / SK</button></li>
             </ul>
 
             {adminSubTabSurat === "masuk" && (
@@ -834,7 +1193,7 @@ export default function DashboardBPH() {
                     
                     <input type="file" className="d-none" id="ai-scan-masuk" accept=".pdf" onChange={(e) => handleAIScanSurat(e, "Masuk")} />
                     <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById('ai-scan-masuk')?.click()} disabled={isAiLoading}>
-                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan AI</>}
+                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan OCR</>}
                     </button>
                     
                     <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataSurat(null); setTipeSurat("Masuk"); setIsModalSuratOpen(true); }}><i className="fas fa-plus me-1"></i> Tambah</button>
@@ -877,7 +1236,7 @@ export default function DashboardBPH() {
                     
                     <input type="file" className="d-none" id="ai-scan-keluar" accept=".pdf" onChange={(e) => handleAIScanSurat(e, "Keluar")} />
                     <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById('ai-scan-keluar')?.click()} disabled={isAiLoading}>
-                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan AI</>}
+                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan OCR</>}
                     </button>
 
                     <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataSurat(null); setTipeSurat("Keluar"); setIsModalSuratOpen(true); }}><i className="fas fa-plus me-1"></i> Buat</button>
@@ -916,106 +1275,155 @@ export default function DashboardBPH() {
         {activeMenu === "admin_keuangan" && (
           <div className="animate-fade-in-up">
             <h4 className="fw-bolder mb-4 text-dark">Keuangan Induk BPH</h4>
-            <ul className="nav nav-pills mb-4 gap-2 bg-white p-2 rounded-pill shadow-sm d-inline-flex border">
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabKeu === "bank" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("bank")}>Kas Induk DEMA</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabKeu === "ops" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("ops")}>Operasional BPH</button></li>
+            <ul className="nav nav-pills mb-4 gap-2 bg-white p-2 rounded-pill shadow-sm d-inline-flex border flex-wrap">
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabKeu === "dipa" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("dipa")}>Dana DIPA</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabKeu === "intern" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("intern")}>Dana Intern</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabKeu === "extern" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("extern")}>Dana Extern</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabKeu === "kepanitiaan" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("kepanitiaan")}>Kepanitiaan</button></li>
             </ul>
 
-            {adminSubTabKeu === "bank" && (
-              <div className="card border-0 shadow-sm rounded-4 p-4">
-                <div className="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom">
-                  <span className="fw-bold text-dark fs-5">Laporan Kas Induk</span>
-                  <button className="btn btn-dark rounded-pill fw-bold px-4 shadow-sm" onClick={() => { setKategoriKeu("Bank"); setIsModalKeuOpen(true); }}><i className="fas fa-plus me-2"></i> Transaksi Kas</button>
-                </div>
-                <div className="table-responsive">
-                  <table className="table table-bordered table-hover align-middle text-nowrap">
-                    <thead className="table-light"><tr><th className="py-3">Tanggal</th><th>Uraian Transaksi</th><th>Debit (Masuk)</th><th>Kredit (Keluar)</th><th>Saldo</th><th>Aksi</th></tr></thead>
-                    <tbody>
-                      {bphKeuangan.filter(k => k.cat === "Bank").length === 0 ? <tr><td colSpan={6} className="text-center py-5 text-muted">Belum ada transaksi bank pusat</td></tr> : 
-                        bphKeuangan.filter(k => k.cat === "Bank").map(k => {
-                          const debit = k.jenis === "Masuk" ? Number(k.nom) : 0;
-                          const kredit = k.jenis === "Keluar" ? Number(k.nom) : 0;
-                          bphSaldoBank += (debit - kredit);
-                          return (
-                            <tr key={k.id}>
-                              <td className="text-secondary">{k.tgl}</td>
-                              <td className="fw-bold text-dark">{k.uraian}</td>
-                              <td className="text-success fw-500">{debit > 0 ? formatRp(debit) : "-"}</td>
-                              <td className="text-danger fw-500">{kredit > 0 ? formatRp(kredit) : "-"}</td>
-                              <td className="fw-bold bg-light">{formatRp(bphSaldoBank)}</td>
-                              <td><button className="btn btn-sm btn-outline-danger rounded-circle"><i className="fas fa-trash"></i></button></td>
-                            </tr>
-                          )
-                        })
-                      }
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+            {/* TAB DIPA / INTERN / EXTERN */}
+            {(adminSubTabKeu === "dipa" || adminSubTabKeu === "intern" || adminSubTabKeu === "extern") && (() => {
+              const catLabel = adminSubTabKeu === "dipa" ? "DIPA" : adminSubTabKeu === "intern" ? "Intern" : "Extern";
+              const rawData = bphKeuangan.filter(k => k.cat === catLabel);
+              let tempSaldo = 0;
+              
+              return (
+                <div className="card border-0 shadow-sm rounded-4 p-4 animate-fade-in-up">
+                  <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 pb-2 border-bottom gap-2">
+                    <span className="fw-bold text-dark fs-5">Sirkulasi Dana {catLabel}</span>
+                    <div className="d-flex gap-2">
+                      <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => exportKeuanganToExcel(catLabel)}><i className="fas fa-file-excel me-1"></i> Excel</button>
+                      
+                      <input type="file" className="d-none" id={`ai-scan-${catLabel}`} accept="image/*,.pdf" onChange={(e) => handleAIScanKeuangan(e, catLabel)} />
+                      <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById(`ai-scan-${catLabel}`)?.click()} disabled={isAiLoading}>
+                        {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan Bukti</>}
+                      </button>
 
-            {adminSubTabKeu === "ops" && (
-              <div className="card border-0 shadow-sm rounded-4 p-4">
-                <div className="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom">
-                  <span className="fw-bold text-dark fs-5">Operasional BPH Pusat</span>
-                  <button className="btn btn-dark rounded-pill fw-bold px-4 shadow-sm" onClick={() => { setKategoriKeu("Operasional"); setIsModalKeuOpen(true); }}><i className="fas fa-plus me-2"></i> Pengeluaran Baru</button>
+                      <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataKeu(null); setKategoriKeu(catLabel); setIsModalKeuOpen(true); }}><i className="fas fa-plus me-1"></i> Tambah Transaksi</button>
+                    </div>
+                  </div>
+                  <div className="table-responsive">
+                    <table className="table table-bordered table-hover align-middle text-nowrap">
+                      <thead className="table-light"><tr><th>No</th><th>Tanggal</th><th>Kegiatan</th><th>Debit</th><th>Kredit</th><th>Saldo Akhir</th><th>Aksi</th></tr></thead>
+                      <tbody>
+                        {rawData.length === 0 ? <tr><td colSpan={7} className="text-center py-5 text-muted">Belum ada transaksi</td></tr> : 
+                          rawData.map((k, i) => {
+                            const debit = k.jenis === "Masuk" ? Number(k.nom) : 0;
+                            const kredit = k.jenis === "Keluar" ? Number(k.nom) : 0;
+                            tempSaldo += (debit - kredit);
+                            return (
+                              <tr key={k.id}>
+                                <td className="text-secondary text-center">{i + 1}</td>
+                                <td>{k.tgl}</td>
+                                <td className="fw-bold text-dark">{k.uraian}</td>
+                                <td className="text-success">{debit > 0 ? formatRp(debit) : "-"}</td>
+                                <td className="text-danger">{kredit > 0 ? formatRp(kredit) : "-"}</td>
+                                <td className="fw-bold bg-light">{formatRp(tempSaldo)}</td>
+                                <td className="text-center">
+                                   <button className="btn btn-sm btn-outline-primary rounded-circle me-1" title="Edit" onClick={() => { setEditDataKeu(k); setKategoriKeu(catLabel); setIsModalKeuOpen(true); }}><i className="fas fa-edit"></i></button>
+                                   <button className="btn btn-sm btn-outline-danger rounded-circle" onClick={() => handleDeleteKeuangan(k.id)}><i className="fas fa-trash"></i></button>
+                                </td>
+                              </tr>
+                            )
+                          })
+                        }
+                        {rawData.length > 0 && (
+                          <tr>
+                            <td colSpan={5} className="text-end fw-bolder text-dark bg-light">TOTAL SALDO AKHIR</td>
+                            <td colSpan={2} className="fw-bolder text-dark bg-light fs-6 text-primary">{formatRp(tempSaldo)}</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-                <div className="table-responsive">
-                  <table className="table table-bordered table-hover align-middle text-nowrap">
-                    <thead className="table-light"><tr><th className="py-3">Tgl</th><th>Uraian</th><th>Penanggung Jawab</th><th>Qty</th><th>Harga Satuan</th><th>Total (Kredit)</th><th>Aksi</th></tr></thead>
-                    <tbody>
-                      {bphKeuangan.filter(k => k.cat === "Operasional").length === 0 ? <tr><td colSpan={7} className="text-center py-5 text-muted">Belum ada transaksi operasional</td></tr> : 
-                        bphKeuangan.filter(k => k.cat === "Operasional").map(k => {
-                          const kredit = k.jenis === "Keluar" ? Number(k.nom) : 0;
-                          return (
-                            <tr key={k.id}>
-                              <td className="text-secondary">{k.tgl}</td>
-                              <td className="fw-bold text-dark">{k.uraian}</td>
-                              <td><span className="badge bg-light text-dark border px-2 py-1">{k.pj || "-"}</span></td>
-                              <td>{k.qty || "-"}</td>
-                              <td>{k.hrg ? formatRp(k.hrg) : "-"}</td>
-                              <td className="text-danger fw-bold bg-light">{formatRp(kredit)}</td>
-                              <td><button className="btn btn-sm btn-outline-danger rounded-circle"><i className="fas fa-trash"></i></button></td>
-                            </tr>
-                          )
-                        })
-                      }
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
+              );
+            })()}
 
-        {/* --- MENU: INVENTARIS BPH --- */}
-        {activeMenu === "admin_inventaris" && (
-          <div className="animate-fade-in-up">
-            <h4 className="fw-bolder mb-4 text-dark">Inventaris DEMA</h4>
-            <div className="card border-0 shadow-sm rounded-4 p-4">
-              <div className="d-flex justify-content-between align-items-center mb-4 pb-2 border-bottom">
-                <span className="fw-bold text-dark fs-5">Buku Inventaris Induk</span>
-                <button className="btn btn-dark rounded-pill fw-bold px-4 shadow-sm" onClick={() => { setTipeInv("Rekap"); setIsModalInvOpen(true); }}><i className="fas fa-plus me-2"></i> Tambah Aset</button>
-              </div>
-              <div className="table-responsive">
-                <table className="table table-hover align-middle text-nowrap border-top">
-                  <thead className="table-light"><tr><th className="py-3">Nama Barang / Aset</th><th>Merk/Tipe</th><th>Jumlah</th><th>Kondisi</th><th>Aksi</th></tr></thead>
-                  <tbody>
-                    {bphInventaris.length === 0 ? <tr><td colSpan={5} className="text-center py-5 text-muted">Belum ada inventaris pusat terdaftar</td></tr> : 
-                      bphInventaris.map(i => (
-                        <tr key={i.id}>
-                          <td className="fw-bold text-dark">{i.nama}</td>
-                          <td className="text-secondary">{i.merk || "-"}</td>
-                          <td><span className="badge bg-dark text-white px-2 py-1">{i.jml || 1}</span></td>
-                          <td>{i.cond === "Baik" ? <span className="badge bg-success bg-opacity-10 text-success border border-success px-2">Baik</span> : <span className="badge bg-danger bg-opacity-10 text-danger border border-danger px-2">{i.cond}</span>}</td>
-                          <td><button className="btn btn-sm btn-outline-danger rounded-circle"><i className="fas fa-trash"></i></button></td>
-                        </tr>
-                      ))
-                    }
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            {/* TAB KEPANITIAAN KHUSUS */}
+            {adminSubTabKeu === "kepanitiaan" && (() => {
+               const kepanitiaanData = bphKeuangan.filter(k => k.cat === "Kepanitiaan");
+               const filteredData = kepanitiaanData.filter(k => k.nama_kegiatan === activeKegiatan);
+               
+               // Hitung Total Seluruh Kegiatan
+               const listUniqKeg = Array.from(new Set(kepanitiaanData.filter(k => k.nama_kegiatan).map(k => k.nama_kegiatan)));
+               let grandTotal = 0;
+
+               return (
+                  <div className="card border-0 shadow-sm rounded-4 p-4 animate-fade-in-up">
+                     <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 pb-2 border-bottom gap-2">
+                        <span className="fw-bold text-dark fs-5">Sirkulasi Keuangan Kegiatan</span>
+                        <div className="d-flex gap-2">
+                          <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => exportKeuanganToExcel("Kepanitiaan")} disabled={!activeKegiatan}><i className="fas fa-file-excel me-1"></i> Excel</button>
+                          
+                          <input type="file" className="d-none" id="ai-scan-kepanitiaan" accept="image/*,.pdf" onChange={(e) => handleAIScanKeuangan(e, "Kepanitiaan")} />
+                          <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById('ai-scan-kepanitiaan')?.click()} disabled={isAiLoading}>
+                            {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan Nota</>}
+                          </button>
+
+                          <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataKeu({nama_kegiatan: activeKegiatan}); setKategoriKeu("Kepanitiaan"); setIsModalKeuOpen(true); }}><i className="fas fa-plus me-1"></i> Input Nota</button>
+                        </div>
+                     </div>
+
+                     <div className="mb-4 d-flex align-items-center bg-light p-3 rounded-3 border flex-wrap gap-3">
+                        <div className="d-flex align-items-center gap-2">
+                          <label className="fw-bold text-nowrap m-0">Pilih Kegiatan:</label>
+                          <select className="form-select form-select-sm shadow-sm fw-bold border-secondary text-primary" style={{minWidth: "250px", maxWidth: "350px"}} value={activeKegiatan} onChange={(e) => setActiveKegiatan(e.target.value)}>
+                             {listUniqKeg.length === 0 && !activeKegiatan ? <option value="">Belum ada kegiatan</option> : null}
+                             {activeKegiatan && !listUniqKeg.includes(activeKegiatan) && (
+                               <option value={activeKegiatan}>{activeKegiatan} (Draft Baru)</option>
+                             )}
+                             {listUniqKeg.map((keg, idx) => <option key={idx} value={keg as string}>{keg as string}</option>)}
+                          </select>
+                        </div>
+                        <button className="btn btn-sm btn-outline-dark fw-bold rounded-pill px-3 shadow-sm" onClick={handleTambahKegiatan}>
+                           <i className="fas fa-folder-plus me-1"></i> Buat Kegiatan Baru
+                        </button>
+                     </div>
+
+                     <div className="table-responsive">
+                        <table className="table table-bordered table-hover align-middle text-nowrap">
+                           <thead className="table-light"><tr><th>No</th><th>No. Nota</th><th>Tanggal</th><th>Nama Barang</th><th>Vol</th><th>Satuan</th><th>Harga Sat.</th><th>Jumlah</th><th>Aksi</th></tr></thead>
+                           <tbody>
+                              {filteredData.length === 0 ? <tr><td colSpan={9} className="text-center py-5 text-muted">Belum ada nota untuk kegiatan ini</td></tr> :
+                                 filteredData.map((k, i) => {
+                                    const qty = Number(k.vol) || 1;
+                                    const satHrg = Number(k.sat_hrg) || Number(k.nom) || 0;
+                                    const jml = qty * satHrg;
+                                    grandTotal += jml;
+                                    
+                                    return (
+                                       <tr key={k.id}>
+                                          <td className="text-center text-secondary">{i+1}</td>
+                                          <td className="text-secondary small font-monospace">{k.no_nota || "-"}</td>
+                                          <td>{k.tgl}</td>
+                                          <td className="fw-bold text-dark">{k.nama_barang || k.uraian}</td>
+                                          <td className="text-center">{qty}</td>
+                                          <td>{k.sat_vol || "-"}</td>
+                                          <td>{formatRp(satHrg)}</td>
+                                          <td className="fw-bold text-danger bg-light">{formatRp(jml)}</td>
+                                          <td className="text-center">
+                                             <button className="btn btn-sm btn-outline-primary rounded-circle me-1" title="Edit" onClick={() => { setEditDataKeu(k); setKategoriKeu("Kepanitiaan"); setIsModalKeuOpen(true); }}><i className="fas fa-edit"></i></button>
+                                             <button className="btn btn-sm btn-outline-danger rounded-circle" onClick={() => handleDeleteKeuangan(k.id)}><i className="fas fa-trash"></i></button>
+                                          </td>
+                                       </tr>
+                                    )
+                                 })
+                              }
+                              {filteredData.length > 0 && (
+                                 <tr>
+                                    <td colSpan={7} className="text-end fw-bolder text-dark bg-light">TOTAL PENGELUARAN KEGIATAN</td>
+                                    <td colSpan={2} className="fw-bolder text-danger bg-light fs-6">{formatRp(grandTotal)}</td>
+                                 </tr>
+                              )}
+                           </tbody>
+                        </table>
+                     </div>
+                  </div>
+               )
+            })()}
+
           </div>
         )}
 
@@ -1219,7 +1627,6 @@ export default function DashboardBPH() {
             <ul className="nav nav-tabs modul-tabs mb-4 border-bottom border-2">
               <li className="nav-item"><a className={`nav-link text-uppercase fw-bold ${detailTab === "surat" ? "active text-dark border-dark" : ""}`} onClick={() => setDetailTab("surat")}>Arsip Surat</a></li>
               <li className="nav-item"><a className={`nav-link text-uppercase fw-bold ${detailTab === "keuangan" ? "active text-dark border-dark" : ""}`} onClick={() => setDetailTab("keuangan")}>Laporan Keuangan</a></li>
-              <li className="nav-item"><a className={`nav-link text-uppercase fw-bold ${detailTab === "inventaris" ? "active text-dark border-dark" : ""}`} onClick={() => setDetailTab("inventaris")}>Data Aset</a></li>
             </ul>
 
             {detailTab === "surat" && (
@@ -1279,27 +1686,6 @@ export default function DashboardBPH() {
               </div>
             )}
 
-            {detailTab === "inventaris" && (
-              <div className="card border-0 shadow-sm rounded-4 p-4 bg-white animate-fade-in-up">
-                <h6 className="fw-bold text-dark mb-4 fs-5 border-bottom pb-2">Daftar Aset Lembaga</h6>
-                <div className="table-responsive">
-                  <table className="table table-hover align-middle text-nowrap border-top">
-                    <thead className="table-light"><tr><th className="py-3">Barang</th><th>Merk</th><th>Jml</th><th>Kondisi</th></tr></thead>
-                    <tbody>
-                      {detailInventaris.length === 0 ? <tr><td colSpan={4} className="text-center text-muted py-5">Belum ada aset terdaftar</td></tr> :
-                        detailInventaris.map(i => (
-                          <tr key={i.id}>
-                            <td className="fw-bold text-dark">{i.nama}</td><td className="text-secondary">{i.merk || "-"}</td>
-                            <td><span className="badge bg-dark text-white px-2 py-1">{i.jml || 1}</span></td>
-                            <td>{i.cond === "Baik" ? <span className="badge bg-success bg-opacity-10 text-success border border-success">Baik</span> : <span className="badge bg-danger bg-opacity-10 text-danger border border-danger">{i.cond}</span>}</td>
-                          </tr>
-                        ))
-                      }
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
           </div>
         )}
 
@@ -1673,8 +2059,7 @@ export default function DashboardBPH() {
 
       {/* MODAL UNTUK BPH - Edit mode using initialData prop */}
       {isModalSuratOpen && <ModalTambahSurat kementerianName="bph" tipe={tipeSurat} initialData={editDataSurat} onClose={() => { setIsModalSuratOpen(false); setEditDataSurat(null); }} />}
-      {isModalKeuOpen && <ModalTambahKeuangan kementerianName="bph" kategori={kategoriKeu} onClose={() => setIsModalKeuOpen(false)} />}
-      {isModalInvOpen && <ModalTambahInventaris kementerianName="bph" tipe={tipeInv} onClose={() => setIsModalInvOpen(false)} />}
+      {isModalKeuOpen && <ModalTambahKeuangan kementerianName="bph" kategori={kategoriKeu} initialData={editDataKeu} onClose={() => { setIsModalKeuOpen(false); setEditDataKeu(null); }} />}
 
     </div>
   );
