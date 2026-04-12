@@ -100,10 +100,12 @@ export default function DashboardBPH() {
 
   const [pdfMasterTtd, setPdfMasterTtd] = useState<File | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState(""); 
-  const previewRef = useRef<HTMLDivElement>(null); 
+  const previewRef = useRef<HTMLImageElement>(null); 
 
   const [notulenJudul, setNotulenJudul] = useState("");
   const [notulenTempat, setNotulenTempat] = useState("");
+  // STATE BARU UNTUK TEKS NOTULEN
+  const [notulenTeks, setNotulenTeks] = useState("");
 
   const [dashboardModalContent, setDashboardModalContent] = useState<"surat" | "keuangan" | "kementerian" | "proker" | "pengurus" | null>(null);
   const [semuaSuratMasuk, setSemuaSuratMasuk] = useState<any[]>([]);
@@ -491,14 +493,53 @@ export default function DashboardBPH() {
     }
   };
 
+  // FUNGSI BARU UNTUK HANDLE UPLOAD FILE DI TAB NOTULEN
+  const handleNotulenUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsAiLoading(true);
+    try {
+      if (file.type.startsWith("image/")) {
+        // Jika file berupa gambar (JPG/PNG), gunakan Tesseract
+        const url = URL.createObjectURL(file);
+        const { data: { text } } = await Tesseract.recognize(url, 'ind');
+        setNotulenTeks(prev => prev + (prev ? "\n" : "") + text);
+      } else if (file.type === "application/pdf") {
+        // Jika file berupa PDF, ekstrak teksnya menggunakan PDF.js
+        const pdfjsLib = await loadPdfjsLib();
+        if (!pdfjsLib) throw new Error("PDF.js gagal dimuat");
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = "";
+        for(let i = 1; i <= Math.min(pdf.numPages, 3); i++) { // Maksimal baca 3 halaman awal untuk notulen
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          fullText += content.items.map((item: any) => item.str).join(" ") + "\n";
+        }
+        setNotulenTeks(prev => prev + (prev ? "\n" : "") + fullText);
+      } else {
+        alert("Format file tidak didukung. Harap unggah Gambar (JPG/PNG) atau PDF.");
+      }
+    } catch (error: any) {
+      alert(`Gagal membaca dokumen: ${error.message}`);
+    } finally {
+      setIsAiLoading(false);
+      e.target.value = ""; // Reset input file
+    }
+  };
+
   const triggerAiProcess = async (actionType: string, extractedText: string = "") => {
     setIsAiLoading(true);
     setAiResponse(""); 
     let payloadData = {};
 
     if (actionType === "notulen") {
-      if (!notulenJudul || !notulenTempat) { setIsAiLoading(false); return alert("Lengkapi data rapat terlebih dahulu!"); }
-      payloadData = { judul: notulenJudul, lokasi: notulenTempat, teksKasar: "Bismillah. Rapat tadi bahas soal proker. Harus ada divisi acara, humas, logistik. Humas cari media partner. Udah itu aja, kelar minggu depan." };
+      if (!notulenJudul || !notulenTempat || !notulenTeks) { 
+          setIsAiLoading(false); 
+          return alert("Lengkapi Judul Kegiatan, Lokasi, dan Catatan Kasar terlebih dahulu!"); 
+      }
+      payloadData = { judul: notulenJudul, lokasi: notulenTempat, teksKasar: notulenTeks };
     } else if (actionType === "smartletter") {
        payloadData = { teksSurat: extractedText }; 
     }
@@ -559,15 +600,47 @@ export default function DashboardBPH() {
 
   const handleTtdKetuaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) { setTtdKetua(file); setTtdKetuaUrl(URL.createObjectURL(file)); }
+    if (file) { 
+      const url = URL.createObjectURL(file);
+      setTtdKetua(file); 
+      setTtdKetuaUrl(url); 
+      const img = new Image();
+      img.onload = () => {
+        const ratio = img.width / img.height;
+        setPosKetua(prev => ({ ...prev, w: 150, h: 150 / ratio }));
+      };
+      img.src = url;
+    }
   };
+
   const handleTtdSekreChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) { setTtdSekre(file); setTtdSekreUrl(URL.createObjectURL(file)); }
+    if (file) { 
+      const url = URL.createObjectURL(file);
+      setTtdSekre(file); 
+      setTtdSekreUrl(url); 
+      const img = new Image();
+      img.onload = () => {
+        const ratio = img.width / img.height;
+        setPosSekre(prev => ({ ...prev, w: 150, h: 150 / ratio }));
+      };
+      img.src = url;
+    }
   };
+
   const handleStempelChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) { setStempel(file); setStempelUrl(URL.createObjectURL(file)); }
+    if (file) { 
+      const url = URL.createObjectURL(file);
+      setStempel(file); 
+      setStempelUrl(url); 
+      const img = new Image();
+      img.onload = () => {
+        const ratio = img.width / img.height;
+        setPosStempel(prev => ({ ...prev, w: 100, h: 100 / ratio }));
+      };
+      img.src = url;
+    }
   };
 
   const handlePdfMasterChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -614,7 +687,6 @@ export default function DashboardBPH() {
 
   const handleSignAndStamp = async () => {
     if (!pdfMasterTtd) return alert("Upload file PDF Master terlebih dahulu!");
-    if (!previewRef.current) return alert("Kanvas preview belum siap.");
 
     setIsAiLoading(true);
     try {
@@ -624,8 +696,15 @@ export default function DashboardBPH() {
       const lastPage = pages[pages.length - 1];
       const { width: pdfWidth, height: pdfHeight } = lastPage.getSize();
 
-      const htmlWidth = previewRef.current.clientWidth;
-      const scaleRatio = pdfWidth / htmlWidth;
+      const imgEl = document.querySelector('.pdf-preview-img') as HTMLImageElement;
+      if (!imgEl) throw new Error("Gagal memproses dimensi layar.");
+
+      const rect = imgEl.getBoundingClientRect();
+      const htmlWidth = rect.width;
+      const htmlHeight = rect.height;
+
+      const scaleX = pdfWidth / htmlWidth;
+      const scaleY = pdfHeight / htmlHeight;
 
       const drawImage = async (file: File, posInfo: any) => {
         const imgBytes = await file.arrayBuffer();
@@ -636,12 +715,12 @@ export default function DashboardBPH() {
           embeddedImg = await pdfDoc.embedJpg(imgBytes);
         } else { throw new Error("Gunakan JPG atau PNG."); }
         
-        const pdfX = posInfo.x * scaleRatio;
-        const pdfY = pdfHeight - ((posInfo.y + posInfo.h) * scaleRatio);
-        const pdfW = posInfo.w * scaleRatio;
-        const pdfH = posInfo.h * scaleRatio;
+        const finalX = posInfo.x * scaleX;
+        const finalY = pdfHeight - ((posInfo.y + posInfo.h) * scaleY);
+        const finalW = posInfo.w * scaleX;
+        const finalH = posInfo.h * scaleY;
 
-        lastPage.drawImage(embeddedImg, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
+        lastPage.drawImage(embeddedImg, { x: finalX, y: finalY, width: finalW, height: finalH });
       };
 
       if (ttdSekre) await drawImage(ttdSekre, posSekre);
@@ -1125,6 +1204,7 @@ export default function DashboardBPH() {
 
         @media (max-width: 768px) {
           body { font-size: 0.85rem; }
+          .main-header { height: 65px; }
           .content-wrapper { padding: 15px; margin-top: 65px; }
           h3 { font-size: 1.4rem; }
           h4 { font-size: 1.2rem; }
@@ -1150,7 +1230,8 @@ export default function DashboardBPH() {
         /* Gaya untuk area drag & drop TTD */
         .pdf-preview-container { position: relative; display: inline-block; width: 100%; max-width: 700px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; background: #f8fafc; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
         .pdf-preview-img { width: 100%; height: auto; display: block; user-select: none; }
-        .draggable-img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; border: 1px dashed #3b82f6; background: rgba(59, 130, 246, 0.1); }
+        /* PENTING: object-fit harus fill agar preview sesuai persis dengan output PDF */
+        .draggable-img { width: 100%; height: 100%; object-fit: fill; pointer-events: none; border: 1px dashed #3b82f6; background: rgba(59, 130, 246, 0.1); }
         
         .cursor-pointer { cursor: pointer; }
       `}</style>
@@ -1161,7 +1242,7 @@ export default function DashboardBPH() {
       {/* RENDER MODAL DATA KEHADIRAN PESERTA PRESENSI */}
       {showModalPeserta && selectedPresensi && (
         <div className="modal-backdrop" style={{position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(15,23,42,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(5px)"}}>
-          <div className="bg-white rounded-4 shadow-lg w-100 overflow-hidden animate-fade-in-up" style={{maxWidth: "900px", maxHeight: "90vh", display: "flex", flexDirection: "column"}}>
+          <div className="bg-white rounded-4 shadow-lg overflow-hidden animate-fade-in-up" style={{width: "95%", maxWidth: "900px", maxHeight: "90vh", display: "flex", flexDirection: "column"}}>
             <div className="p-4 border-bottom d-flex justify-content-between align-items-center bg-light">
                <div>
                   <h5 className="fw-bolder m-0 text-dark">Data Kehadiran: {selectedPresensi.nama_kegiatan}</h5>
@@ -1219,7 +1300,7 @@ export default function DashboardBPH() {
           <img src="https://i.ibb.co.com/gFhcwFzr/icon.png" alt="Logo" className="sidebar-logo" />
           <div className="d-flex flex-column">
             <span className="fw-bolder text-dark" style={{ lineHeight: 1.2, letterSpacing: "1px" }}>SIDEMALIKI</span>
-            <span style={{ fontSize: "0.75rem", color: "#64748b", fontWeight: 600 }}>BPH / Induk</span>
+            <span style={{ fontSize: "0.75rem", color: "#64748b", fontWeight: 600 }}>Badan Pengurus Harian</span>
           </div>
         </div>
 
@@ -1239,7 +1320,7 @@ export default function DashboardBPH() {
 
           <li className="sidebar-heading">Manajemen Sistem</li>
           <li className="mt-1 mb-2"></li>
-          <li><a className={`nav-link ${activeMenu === "asisten_ai" ? "active" : ""}`} onClick={() => { setActiveMenu("asisten_ai"); setIsSidebarOpen(false); }}><i className="fas fa-robot text-primary"></i> <span>Asisten AI</span></a></li>
+          <li><a className={`nav-link ${activeMenu === "asisten_ai" ? "active" : ""}`} onClick={() => { setActiveMenu("asisten_ai"); setIsSidebarOpen(false); }}><i className="fas fa-robot"></i> <span>Asisten AI</span></a></li>
           <li><a className={`nav-link ${activeMenu === "kementerian" || activeMenu === "detail" ? "active" : ""}`} onClick={() => { setActiveMenu("kementerian"); setIsSidebarOpen(false); }}><i className="fas fa-users"></i> <span>Kelola Kementerian</span></a></li>
           <li><a className={`nav-link ${activeMenu === "pengaturan_web" ? "active" : ""}`} onClick={() => { setActiveMenu("pengaturan_web"); setIsSidebarOpen(false); }}><i className="fas fa-globe"></i> <span>Pengaturan Web</span></a></li>
           
@@ -1297,7 +1378,7 @@ export default function DashboardBPH() {
               <div className="col-12 col-md-4">
                 <div className="info-box" onClick={() => setDashboardModalContent("surat")}>
                   <div>
-                    <small className="text-muted fw-bold d-block mb-1 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.75rem" }}>Total Surat</small>
+                    <small className="text-muted fw-bold d-block mb-1 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.75rem" }}>Persuratan</small>
                     <h2 className="fw-bolder m-0 text-dark">{totalSurat}</h2>
                     <span className="badge bg-light text-secondary border mt-2 px-2 py-1"><i className="fas fa-file-alt me-1"></i>Keseluruhan</span>
                   </div>
@@ -1306,13 +1387,13 @@ export default function DashboardBPH() {
               </div>
               
               <div className="col-12 col-md-4">
-                <div className="info-box border-start border-4 border-success" onClick={() => setDashboardModalContent("keuangan")}>
+                <div className="info-box" onClick={() => setDashboardModalContent("keuangan")}>
                   <div>
-                    <small className="text-muted fw-bold d-block mb-1 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.75rem" }}>Saldo Kas Induk</small>
+                    <small className="text-muted fw-bold d-block mb-1 text-uppercase" style={{ letterSpacing: "1px", fontSize: "0.75rem" }}>Keuangan</small>
                     <h2 className="fw-bolder m-0 text-dark">{formatRp(saldoKas)}</h2>
-                    <span className="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25 mt-2 px-2 py-1"><i className="fas fa-chart-line me-1"></i>Kas Aktif</span>
+                    <span className="badge bg-light text-secondary border mt-2 px-2 py-1"><i className="fas fa-chart-line me-1"></i>Kas Aktif</span>
                   </div>
-                  <div className="icon-circle bg-white shadow-sm border-0"><i className="fas fa-wallet text-success"></i></div>
+                  <div className="icon-circle"><i className="fas fa-wallet"></i></div>
                 </div>
               </div>
               
@@ -1614,7 +1695,7 @@ export default function DashboardBPH() {
                      <div className="mb-4 d-flex flex-column flex-md-row align-items-md-center bg-light p-3 rounded-3 border gap-3">
                         <div className="d-flex flex-column flex-sm-row align-items-sm-center gap-2 flex-grow-1">
                           <label className="fw-bold text-nowrap m-0">Pilih Kegiatan:</label>
-                          <select className="form-select form-select-sm shadow-sm fw-bold border-secondary text-primary w-100" value={activeKegiatan} onChange={(e) => setActiveKegiatan(e.target.value)}>
+                          <select className="form-select form-select-sm shadow-sm fw-bold border-secondary text-primary" style={{maxWidth: "100%"}} value={activeKegiatan} onChange={(e) => setActiveKegiatan(e.target.value)}>
                              {listUniqKeg.length === 0 ? <option value="">Belum ada kegiatan</option> : null}
                              {listUniqKeg.map((keg, idx) => {
                                 const isDraftOnly = daftarKegiatanCustom.includes(keg as string) && !kepanitiaanData.some(k => k.nama_kegiatan === keg);
@@ -1701,7 +1782,7 @@ export default function DashboardBPH() {
                           <input type="date" className="form-control" value={formPresensi.tgl} onChange={(e) => setFormPresensi({...formPresensi, tgl: e.target.value})} required />
                        </div>
                     </div>
-                    <button type="submit" className="btn btn-dark fw-bold rounded-pill px-5 w-100 w-md-auto"><i className="fas fa-magic me-2"></i> Generate Link</button>
+                    <button type="submit" className="btn btn-dark fw-bold rounded-pill px-5"><i className="fas fa-magic me-2"></i> Generate Link</button>
                   </form>
                 </div>
               )}
@@ -1818,7 +1899,7 @@ export default function DashboardBPH() {
               <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4 bg-white animate-fade-in-up">
                 <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center mb-4 border-bottom pb-2 gap-3">
                   <span className="fw-bold text-dark fs-5">Daftar Program Kerja BPH</span>
-                  <button className={`btn rounded-pill fw-bold px-3 px-md-4 shadow-sm w-100 w-sm-auto ${showAddProker ? 'btn-light border' : 'btn-dark'}`} onClick={() => { setShowAddProker(!showAddProker); setEditProkerId(null); setFormProker({ nama: "", tujuan: "", sasaran: "", kpi: "", pj: "", anggaran: "", waktu_pelaksanaan: "", scope: "bph" }); }}>
+                  <button className={`btn rounded-pill fw-bold px-3 px-md-4 shadow-sm ${showAddProker ? 'btn-light border' : 'btn-dark'}`} onClick={() => { setShowAddProker(!showAddProker); setEditProkerId(null); setFormProker({ nama: "", tujuan: "", sasaran: "", kpi: "", pj: "", anggaran: "", waktu_pelaksanaan: "", scope: "bph" }); }}>
                     <i className={`fas ${showAddProker ? 'fa-times text-danger' : 'fa-plus text-white'} me-1 me-md-2`}></i> <span className="d-none d-sm-inline">{showAddProker ? "Batal" : "Tambah Proker"}</span>
                   </button>
                 </div>
@@ -1865,7 +1946,7 @@ export default function DashboardBPH() {
                          </div>
                       </div>
 
-                      <button type="submit" className="btn btn-dark fw-bold rounded-pill px-5 w-100 w-md-auto"><i className="fas fa-save me-2"></i> Simpan Program Kerja</button>
+                      <button type="submit" className="btn btn-dark fw-bold rounded-pill px-5"><i className="fas fa-save me-2"></i> Simpan Program Kerja</button>
                     </form>
                   </div>
                 )}
@@ -1945,7 +2026,7 @@ export default function DashboardBPH() {
             <h4 className="fw-bolder mb-4 text-dark">Kelola Akun Kementerian</h4>
             
             <div className="mb-3 text-start text-sm-end">
-              <button className={`btn rounded-pill fw-bold px-4 shadow-sm w-100 w-sm-auto ${showAddForm ? 'btn-light border' : 'btn-dark'}`} onClick={() => setShowAddForm(!showAddForm)}>
+              <button className={`btn rounded-pill fw-bold px-4 shadow-sm ${showAddForm ? 'btn-light border' : 'btn-dark'}`} onClick={() => setShowAddForm(!showAddForm)}>
                 <i className={`fas ${showAddForm ? 'fa-times text-danger' : 'fa-user-plus text-white'} me-2`}></i> {showAddForm ? "Batal Tambah Akun" : "Buat Akun Baru"}
               </button>
             </div>
@@ -1962,7 +2043,7 @@ export default function DashboardBPH() {
                     <div className="col-md-6"><label className="form-label small fw-bold text-secondary">Email Login</label><input type="email" className="form-control bg-light" placeholder="kemendagri@sidemaliki.com" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} required /></div>
                     <div className="col-md-6"><label className="form-label small fw-bold text-secondary">Password Login</label><input type="text" className="form-control bg-light" placeholder="Minimal 6 karakter" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={6} /></div>
                   </div>
-                  <button type="submit" className="btn btn-dark fw-bold rounded-pill px-4 w-100 w-md-auto" disabled={isSubmitting}><i className="fas fa-save me-2"></i> {isSubmitting ? "Menyimpan..." : "Simpan Akun"}</button>
+                  <button type="submit" className="btn btn-dark fw-bold rounded-pill px-4" disabled={isSubmitting}><i className="fas fa-save me-2"></i> {isSubmitting ? "Menyimpan..." : "Simpan Akun"}</button>
                 </form>
               </div>
             )}
@@ -1997,7 +2078,7 @@ export default function DashboardBPH() {
         {/* --- MENU: DETAIL SPY VIEW KEMENTERIAN --- */}
         {activeMenu === "detail" && selectedKem && (
           <div className="animate-fade-in-up">
-            <button className="btn btn-light border shadow-sm mb-4 text-dark fw-bold rounded-pill px-3 w-100 w-sm-auto" onClick={() => setActiveMenu("kementerian")}><i className="fas fa-arrow-left me-2"></i> Kembali</button>
+            <button className="btn btn-light border shadow-sm mb-4 text-dark fw-bold rounded-pill px-3" onClick={() => setActiveMenu("kementerian")}><i className="fas fa-arrow-left me-2"></i> Kembali</button>
             <div className="card border-0 shadow-sm rounded-4 p-4 mb-4 glass-card">
               <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center position-relative gap-3" style={{ zIndex: 2 }}>
                 <div><h4 className="fw-bolder mb-1 text-white">{selectedKem.nama}</h4><p className="m-0 text-white opacity-75 small"><i className="fas fa-envelope me-2"></i>{selectedKem.email}</p></div>
@@ -2144,11 +2225,25 @@ export default function DashboardBPH() {
                     <label className="form-label small fw-bold text-secondary">Tempat / Lokasi</label>
                     <input type="text" className="form-control bg-light border-secondary" placeholder="Ruang Meeting A" value={notulenTempat} onChange={(e) => setNotulenTempat(e.target.value)} />
                   </div>
+                  
                   <div className="col-12 mt-4">
-                    <label className="form-label small fw-bold text-secondary">Upload Foto Catatan / Ketik Transkrip</label>
-                    <div className="upload-area p-4 p-md-5 bg-light border-secondary">
-                      <i className="fas fa-file-alt fa-3x text-secondary mb-3 opacity-50"></i>
-                      <p className="m-0 small fw-bold text-dark">Upload JPG/PNG atau Paste teks kasar di area ini</p>
+                    <label className="form-label small fw-bold text-secondary">Catatan Kasar / Hasil Scan</label>
+                    <textarea
+                      className="form-control bg-light border-secondary mb-3"
+                      rows={5}
+                      placeholder="Ketik/paste catatan di sini, atau upload foto catatan untuk di-scan otomatis..."
+                      value={notulenTeks}
+                      onChange={(e) => setNotulenTeks(e.target.value)}
+                    ></textarea>
+
+                    <div className="d-flex align-items-center gap-3">
+                       <input type="file" className="d-none" id="upload-notulen-scan" accept="image/*,.pdf" onChange={handleNotulenUpload} />
+                       <button className="btn btn-outline-dark rounded-pill fw-bold px-4" onClick={() => document.getElementById('upload-notulen-scan')?.click()} disabled={isAiLoading}>
+                          {isAiLoading ? <><i className="fas fa-spinner fa-spin me-2"></i>Membaca File...</> : <><i className="fas fa-camera me-2"></i>Scan Foto/Dokumen</>}
+                       </button>
+                       {notulenTeks && (
+                           <span className="small text-success fw-bold"><i className="fas fa-check-circle me-1"></i> Teks termuat</span>
+                       )}
                     </div>
                   </div>
                 </div>
@@ -2225,7 +2320,7 @@ export default function DashboardBPH() {
                             position={{ x: posSekre.x, y: posSekre.y }}
                             size={{ width: posSekre.w, height: posSekre.h }}
                             onDragStop={(e, d) => setPosSekre({ ...posSekre, x: d.x, y: d.y })}
-                            onResizeStop={(e, dir, ref, delta, pos) => setPosSekre({ x: pos.x, y: pos.y, w: parseInt(ref.style.width), h: parseInt(ref.style.height) })}
+                            onResizeStop={(e, dir, ref, delta, pos) => setPosSekre({ x: pos.x, y: pos.y, w: parseFloat(ref.style.width), h: parseFloat(ref.style.height) })}
                           >
                             <img src={ttdSekreUrl} className="draggable-img" alt="ttd sekre" />
                           </Rnd>
@@ -2238,7 +2333,7 @@ export default function DashboardBPH() {
                             position={{ x: posKetua.x, y: posKetua.y }}
                             size={{ width: posKetua.w, height: posKetua.h }}
                             onDragStop={(e, d) => setPosKetua({ ...posKetua, x: d.x, y: d.y })}
-                            onResizeStop={(e, dir, ref, delta, pos) => setPosKetua({ x: pos.x, y: pos.y, w: parseInt(ref.style.width), h: parseInt(ref.style.height) })}
+                            onResizeStop={(e, dir, ref, delta, pos) => setPosKetua({ x: pos.x, y: pos.y, w: parseFloat(ref.style.width), h: parseFloat(ref.style.height) })}
                           >
                             <img src={ttdKetuaUrl} className="draggable-img" alt="ttd ketua" />
                           </Rnd>
@@ -2252,7 +2347,7 @@ export default function DashboardBPH() {
                             size={{ width: posStempel.w, height: posStempel.h }}
                             lockAspectRatio={true}
                             onDragStop={(e, d) => setPosStempel({ ...posStempel, x: d.x, y: d.y })}
-                            onResizeStop={(e, dir, ref, delta, pos) => setPosStempel({ x: pos.x, y: pos.y, w: parseInt(ref.style.width), h: parseInt(ref.style.height) })}
+                            onResizeStop={(e, dir, ref, delta, pos) => setPosStempel({ x: pos.x, y: pos.y, w: parseFloat(ref.style.width), h: parseFloat(ref.style.height) })}
                           >
                             <img src={stempelUrl} className="draggable-img" alt="stempel" style={{ opacity: 0.8 }} />
                           </Rnd>

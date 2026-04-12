@@ -18,12 +18,12 @@ export async function POST(req: NextRequest) {
     }
 
     // Menggunakan model standar terbaru
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     let prompt = "";
 
     switch (action) {
       case "notulen":
-        prompt = `Anda adalah seorang Sekretaris Eksekutif DEMA UIN Malang yang sangat profesional. 
+        prompt = `Anda adalah seorang Sekretaris Dewan Eksekutif Mahasiswa UIN Malang yang sangat profesional. 
         Tugas Anda adalah merapikan catatan kasar atau hasil transkrip rapat berikut menjadi sebuah Notulensi Rapat yang sangat rapi, formal, dan menggunakan tata bahasa Indonesia baku (KBBI).
         
         Informasi Rapat:
@@ -38,25 +38,6 @@ export async function POST(req: NextRequest) {
         2. Agenda / Topik Pembahasan Pokok
         3. Poin-poin Detail Diskusi (Jelaskan dengan narasi yang profesional)
         4. Kesimpulan dan Tindak Lanjut (Action Items).`;
-        break;
-
-      case "renstra":
-        prompt = `Anda adalah Konsultan Organisasi dan Perencanaan Strategis yang handal. 
-        Buatkan draf Program Kerja (Proker) yang inovatif dan Analisis SWOT untuk organisasi target di bawah ini.
-        
-        Data Organisasi Target: ${payload.organisasi}
-        Visi Induk: ${payload.visi}
-        Misi Induk: ${payload.misi}
-        Konteks / Isu Terkini yang ingin diselesaikan: ${payload.konteks}
-        
-        Buatlah output dalam format Markdown yang rapi. Berikan minimal 3 ide program kerja konkret yang sejalan dengan Visi Misi induk dan menjawab "Isu Terkini" organisasi tersebut. 
-        Untuk setiap program kerja, sertakan: 
-        - Nama Program Kerja
-        - Tujuan Program
-        - Sasaran Peserta
-        - Indikator Keberhasilan (KPI)
-        
-        Di bagian akhir, berikan Analisis SWOT singkat dalam bentuk bullet points.`;
         break;
 
       case "smartletter":
@@ -79,10 +60,10 @@ export async function POST(req: NextRequest) {
         "${payload.teksSurat}"
   
         Jika ini surat MASUK, format JSON-nya:
-        { "no": "nomor surat", "asal": "nama instansi pengirim", "tgl_buat": "YYYY-MM-DD", "tgl_datang": "YYYY-MM-DD", "hal": "perihal surat", "ket": "keterangan singkat" }
+        { "no/nomor": "nomor surat", "asal": "nama instansi pengirim", "tgl_buat": "YYYY-MM-DD", "tgl_datang": "YYYY-MM-DD", "hal/perihal": "perihal surat", "ket": "keterangan singkat" }
   
         Jika ini surat KELUAR, format JSON-nya:
-        { "no": "nomor surat", "tujuan": "nama instansi tujuan", "tgl_buat": "YYYY-MM-DD", "tgl_kirim": "YYYY-MM-DD", "hal": "perihal surat", "ket": "keterangan singkat" }
+        { "no/nomor": "nomor surat", "tujuan": "nama instansi tujuan/Kepada/Yth/Kepada Yth", "tgl_buat": "YYYY-MM-DD", "tgl_kirim": "YYYY-MM-DD", "hal/perihal": "perihal surat", "ket": "keterangan singkat" }
 
         Tipe surat yang diminta adalah: ${payload.tipeSurat}. 
         Pastikan output HANYA JSON.`;
