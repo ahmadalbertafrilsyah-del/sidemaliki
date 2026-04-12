@@ -1139,7 +1139,6 @@ export default function DashboardBPH() {
           .glass-card { padding: 20px !important; border-radius: 15px; }
           .nav-pills { gap: 0.5rem !important; }
           .nav-pills .nav-link { padding: 6px 12px; font-size: 0.75rem; }
-          .card-body { padding: 15px !important; }
           .form-control, .form-select { font-size: 0.85rem; padding: 0.4rem 0.8rem; }
           .ai-tabs .nav-link { padding: 8px 12px; font-size: 0.75rem; margin-bottom: 5px; }
           
@@ -1250,7 +1249,7 @@ export default function DashboardBPH() {
 
       {isSidebarOpen && <div className="mobile-overlay" onClick={() => setIsSidebarOpen(false)}></div>}
 
-      <header className="main-header d-flex justify-content-between align-items-center">
+      <header className="main-header d-flex justify-content-between align-items-center px-4 px-lg-5">
         {/* KIRI: Tombol Menu (Mobile) & Waktu (Desktop) */}
         <div className="d-flex align-items-center">
           <button className="btn btn-light d-lg-none me-2 border shadow-sm" onClick={() => setIsSidebarOpen(true)}>
@@ -1397,22 +1396,33 @@ export default function DashboardBPH() {
         {activeMenu === "admin_surat" && (
           <div className="animate-fade-in-up">
             <h4 className="fw-bolder mb-4 text-dark">Surat Induk BPH</h4>
-            <ul className="nav nav-pills mb-4 bg-white p-2 rounded-4 shadow-sm d-inline-flex border scroll-menu-mobile">
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabSurat === "masuk" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("masuk")}>Surat Masuk</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabSurat === "keluar" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("keluar")}>Surat Keluar / SK</button></li>
+            
+            {/* TAMPILAN TAB UNTUK DESKTOP */}
+            <ul className="nav nav-pills mb-4 bg-white p-2 rounded-4 shadow-sm d-none d-md-inline-flex border">
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 text-nowrap ${adminSubTabSurat === "masuk" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("masuk")}>Surat Masuk</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 text-nowrap ${adminSubTabSurat === "keluar" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("keluar")}>Surat Keluar / SK</button></li>
             </ul>
+
+            {/* TAMPILAN DROPDOWN UNTUK MOBILE */}
+            <div className="d-block d-md-none mb-4">
+               <label className="small fw-bold text-muted mb-1">Pilih Kategori Surat:</label>
+               <select className="form-select border-dark fw-bold text-dark shadow-sm rounded-3 py-2" value={adminSubTabSurat} onChange={(e) => setAdminSubTabSurat(e.target.value)}>
+                  <option value="masuk">📥 Surat Masuk</option>
+                  <option value="keluar">📤 Surat Keluar / SK</option>
+               </select>
+            </div>
 
             {adminSubTabSurat === "masuk" && (
               <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4">
                 <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 pb-2 border-bottom gap-3">
                   <span className="fw-bold text-dark fs-5">Data Surat Masuk BPH</span>
                   <div className="d-flex flex-wrap gap-2">
-                    <input type="text" className="form-control form-control-sm rounded-pill px-3" style={{width: "180px"}} placeholder="🔍 Cari Perihal..." value={searchMasuk} onChange={(e) => setSearchMasuk(e.target.value)} />
+                    <input type="text" className="form-control form-control-sm rounded-pill px-3 flex-grow-1" style={{minWidth: "150px"}} placeholder="🔍 Cari Perihal..." value={searchMasuk} onChange={(e) => setSearchMasuk(e.target.value)} />
                     <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => exportToExcel(sortedMasuk, "Surat_Masuk_BPH", "Masuk")}><i className="fas fa-file-excel me-1"></i> Excel</button>
                     
                     <input type="file" className="d-none" id="ai-scan-masuk" accept=".pdf" onChange={(e) => handleAIScanSurat(e, "Masuk")} />
                     <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById('ai-scan-masuk')?.click()} disabled={isAiLoading}>
-                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan</>}
+                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan OCR</>}
                     </button>
                     
                     <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataSurat(null); setTipeSurat("Masuk"); setIsModalSuratOpen(true); }}><i className="fas fa-plus me-1"></i> Tambah</button>
@@ -1450,12 +1460,12 @@ export default function DashboardBPH() {
                 <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 pb-2 border-bottom gap-3">
                   <span className="fw-bold text-dark fs-5">Data Surat Keluar / SK</span>
                   <div className="d-flex flex-wrap gap-2">
-                    <input type="text" className="form-control form-control-sm rounded-pill px-3" style={{width: "180px"}} placeholder="🔍 Cari Perihal..." value={searchKeluar} onChange={(e) => setSearchKeluar(e.target.value)} />
+                    <input type="text" className="form-control form-control-sm rounded-pill px-3 flex-grow-1" style={{minWidth: "150px"}} placeholder="🔍 Cari Perihal..." value={searchKeluar} onChange={(e) => setSearchKeluar(e.target.value)} />
                     <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => exportToExcel(sortedKeluar, "Surat_Keluar_BPH", "Keluar")}><i className="fas fa-file-excel me-1"></i> Excel</button>
                     
                     <input type="file" className="d-none" id="ai-scan-keluar" accept=".pdf" onChange={(e) => handleAIScanSurat(e, "Keluar")} />
                     <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById('ai-scan-keluar')?.click()} disabled={isAiLoading}>
-                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan</>}
+                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan OCR</>}
                     </button>
 
                     <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataSurat(null); setTipeSurat("Keluar"); setIsModalSuratOpen(true); }}><i className="fas fa-plus me-1"></i> Buat</button>
@@ -1494,12 +1504,25 @@ export default function DashboardBPH() {
         {activeMenu === "admin_keuangan" && (
           <div className="animate-fade-in-up">
             <h4 className="fw-bolder mb-4 text-dark">Keuangan Induk BPH</h4>
-            <ul className="nav nav-pills mb-4 bg-white p-2 rounded-4 shadow-sm d-inline-flex border scroll-menu-mobile">
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabKeu === "dipa" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("dipa")}>Dana DIPA</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabKeu === "intern" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("intern")}>Dana Intern</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabKeu === "extern" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("extern")}>Dana Extern</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabKeu === "kepanitiaan" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("kepanitiaan")}>Kepanitiaan</button></li>
+
+            {/* TAMPILAN TAB UNTUK DESKTOP */}
+            <ul className="nav nav-pills mb-4 bg-white p-2 rounded-4 shadow-sm d-none d-md-inline-flex border flex-wrap">
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 text-nowrap ${adminSubTabKeu === "dipa" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("dipa")}>Dana DIPA</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 text-nowrap ${adminSubTabKeu === "intern" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("intern")}>Dana Intern</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 text-nowrap ${adminSubTabKeu === "extern" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("extern")}>Dana Extern</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 text-nowrap ${adminSubTabKeu === "kepanitiaan" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("kepanitiaan")}>Kepanitiaan</button></li>
             </ul>
+
+            {/* TAMPILAN DROPDOWN UNTUK MOBILE */}
+            <div className="d-block d-md-none mb-4">
+               <label className="small fw-bold text-muted mb-1">Pilih Kategori Keuangan:</label>
+               <select className="form-select border-dark fw-bold text-dark shadow-sm rounded-3 py-2" value={adminSubTabKeu} onChange={(e) => setAdminSubTabKeu(e.target.value)}>
+                  <option value="dipa">🏢 Dana DIPA</option>
+                  <option value="intern">🤝 Dana Intern</option>
+                  <option value="extern">💼 Dana Extern</option>
+                  <option value="kepanitiaan">🎯 Kepanitiaan</option>
+               </select>
+            </div>
 
             {/* TAB DIPA / INTERN / EXTERN */}
             {(adminSubTabKeu === "dipa" || adminSubTabKeu === "intern" || adminSubTabKeu === "extern") && (() => {
@@ -1519,7 +1542,7 @@ export default function DashboardBPH() {
                         {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan Bukti</>}
                       </button>
 
-                      <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataKeu(null); setKategoriKeu(catLabel); setIsModalKeuOpen(true); }}><i className="fas fa-plus me-1"></i> Input</button>
+                      <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataKeu(null); setKategoriKeu(catLabel); setIsModalKeuOpen(true); }}><i className="fas fa-plus me-1"></i> Tambah Transaksi</button>
                     </div>
                   </div>
                   <div className="table-responsive">
@@ -1589,9 +1612,9 @@ export default function DashboardBPH() {
                      </div>
 
                      <div className="mb-4 d-flex flex-column flex-md-row align-items-md-center bg-light p-3 rounded-3 border gap-3">
-                        <div className="d-flex flex-column flex-md-row align-items-md-center gap-2 flex-grow-1">
+                        <div className="d-flex flex-column flex-sm-row align-items-sm-center gap-2 flex-grow-1">
                           <label className="fw-bold text-nowrap m-0">Pilih Kegiatan:</label>
-                          <select className="form-select form-select-sm shadow-sm fw-bold border-secondary text-primary" style={{maxWidth: "100%"}} value={activeKegiatan} onChange={(e) => setActiveKegiatan(e.target.value)}>
+                          <select className="form-select form-select-sm shadow-sm fw-bold border-secondary text-primary w-100" value={activeKegiatan} onChange={(e) => setActiveKegiatan(e.target.value)}>
                              {listUniqKeg.length === 0 ? <option value="">Belum ada kegiatan</option> : null}
                              {listUniqKeg.map((keg, idx) => {
                                 const isDraftOnly = daftarKegiatanCustom.includes(keg as string) && !kepanitiaanData.some(k => k.nama_kegiatan === keg);
@@ -1793,9 +1816,9 @@ export default function DashboardBPH() {
 
             {prokerTab === "umum" && (
               <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4 bg-white animate-fade-in-up">
-                <div className="d-flex justify-content-between align-items-center mb-4 border-bottom pb-2">
+                <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center mb-4 border-bottom pb-2 gap-3">
                   <span className="fw-bold text-dark fs-5">Daftar Program Kerja BPH</span>
-                  <button className={`btn rounded-pill fw-bold px-3 px-md-4 shadow-sm ${showAddProker ? 'btn-light border' : 'btn-dark'}`} onClick={() => { setShowAddProker(!showAddProker); setEditProkerId(null); setFormProker({ nama: "", tujuan: "", sasaran: "", kpi: "", pj: "", anggaran: "", waktu_pelaksanaan: "", scope: "bph" }); }}>
+                  <button className={`btn rounded-pill fw-bold px-3 px-md-4 shadow-sm w-100 w-sm-auto ${showAddProker ? 'btn-light border' : 'btn-dark'}`} onClick={() => { setShowAddProker(!showAddProker); setEditProkerId(null); setFormProker({ nama: "", tujuan: "", sasaran: "", kpi: "", pj: "", anggaran: "", waktu_pelaksanaan: "", scope: "bph" }); }}>
                     <i className={`fas ${showAddProker ? 'fa-times text-danger' : 'fa-plus text-white'} me-1 me-md-2`}></i> <span className="d-none d-sm-inline">{showAddProker ? "Batal" : "Tambah Proker"}</span>
                   </button>
                 </div>
@@ -1847,6 +1870,7 @@ export default function DashboardBPH() {
                   </div>
                 )}
 
+                {/* MENAMPILKAN SEMUA PROKER ORGANISASI SECARA TERKELOMPOK */}
                 {Object.keys(groupedProkers).length === 0 ? (
                   <p className="text-center py-5 text-muted">Belum ada program kerja yang ditambahkan di organisasi.</p>
                 ) : (
@@ -1920,8 +1944,8 @@ export default function DashboardBPH() {
           <div className="animate-fade-in-up">
             <h4 className="fw-bolder mb-4 text-dark">Kelola Akun Kementerian</h4>
             
-            <div className="mb-3 text-end">
-              <button className={`btn rounded-pill fw-bold px-4 shadow-sm ${showAddForm ? 'btn-light border' : 'btn-dark'}`} onClick={() => setShowAddForm(!showAddForm)}>
+            <div className="mb-3 text-start text-sm-end">
+              <button className={`btn rounded-pill fw-bold px-4 shadow-sm w-100 w-sm-auto ${showAddForm ? 'btn-light border' : 'btn-dark'}`} onClick={() => setShowAddForm(!showAddForm)}>
                 <i className={`fas ${showAddForm ? 'fa-times text-danger' : 'fa-user-plus text-white'} me-2`}></i> {showAddForm ? "Batal Tambah Akun" : "Buat Akun Baru"}
               </button>
             </div>
@@ -1973,7 +1997,7 @@ export default function DashboardBPH() {
         {/* --- MENU: DETAIL SPY VIEW KEMENTERIAN --- */}
         {activeMenu === "detail" && selectedKem && (
           <div className="animate-fade-in-up">
-            <button className="btn btn-light border shadow-sm mb-4 text-dark fw-bold rounded-pill px-3" onClick={() => setActiveMenu("kementerian")}><i className="fas fa-arrow-left me-2"></i> Kembali</button>
+            <button className="btn btn-light border shadow-sm mb-4 text-dark fw-bold rounded-pill px-3 w-100 w-sm-auto" onClick={() => setActiveMenu("kementerian")}><i className="fas fa-arrow-left me-2"></i> Kembali</button>
             <div className="card border-0 shadow-sm rounded-4 p-4 mb-4 glass-card">
               <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center position-relative gap-3" style={{ zIndex: 2 }}>
                 <div><h4 className="fw-bolder mb-1 text-white">{selectedKem.nama}</h4><p className="m-0 text-white opacity-75 small"><i className="fas fa-envelope me-2"></i>{selectedKem.email}</p></div>
@@ -2022,7 +2046,7 @@ export default function DashboardBPH() {
             )}
 
             {detailTab === "keuangan" && (
-              <div className="card border-0 shadow-sm rounded-4 p-4 bg-white animate-fade-in-up">
+              <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4 bg-white animate-fade-in-up">
                 <h6 className="fw-bold text-dark mb-4 fs-5 border-bottom pb-2">Rekap Keuangan</h6>
                 <div className="table-responsive">
                   <table className="table table-hover align-middle text-nowrap border-top">
@@ -2122,7 +2146,7 @@ export default function DashboardBPH() {
                   </div>
                   <div className="col-12 mt-4">
                     <label className="form-label small fw-bold text-secondary">Upload Foto Catatan / Ketik Transkrip</label>
-                    <div className="upload-area p-5 bg-light border-secondary">
+                    <div className="upload-area p-4 p-md-5 bg-light border-secondary">
                       <i className="fas fa-file-alt fa-3x text-secondary mb-3 opacity-50"></i>
                       <p className="m-0 small fw-bold text-dark">Upload JPG/PNG atau Paste teks kasar di area ini</p>
                     </div>
@@ -2336,7 +2360,7 @@ export default function DashboardBPH() {
                       
                       <div className="d-flex flex-column flex-sm-row align-items-sm-center gap-3">
                         <input type="file" className="form-control d-none" id="upload-po-ppta" accept=".pdf" onChange={handlePoPptaUpload} />
-                        <button type="button" className="btn btn-dark fw-bold rounded-pill shadow-sm text-nowrap" onClick={() => document.getElementById('upload-po-ppta')?.click()} disabled={isUploadingPdf}>
+                        <button type="button" className="btn btn-dark fw-bold rounded-pill shadow-sm text-nowrap w-100 w-sm-auto" onClick={() => document.getElementById('upload-po-ppta')?.click()} disabled={isUploadingPdf}>
                           {isUploadingPdf ? <i className="fas fa-spinner fa-spin me-2"></i> : <i className="fas fa-upload me-2"></i>}
                           {isUploadingPdf ? "Menyimpan ke Cloud..." : "Pilih File PDF"}
                         </button>
@@ -2379,7 +2403,7 @@ export default function DashboardBPH() {
                   </div>
 
                   <div className="d-flex flex-column flex-sm-row justify-content-between align-items-center bg-slate-50 p-3 rounded-3 border gap-3">
-                    <span className="small text-dark fw-bold">
+                    <span className="small text-dark fw-bold text-center text-sm-start">
                       <i className="fas fa-info-circle text-primary me-2"></i> 
                       {dataPengurus.length > 0 ? `${dataPengurus.length} Baris Data Terbaca` : "Belum Ada Data Baru"}
                     </span>
