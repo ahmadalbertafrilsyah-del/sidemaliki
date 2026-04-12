@@ -48,8 +48,6 @@ export default function DashboardBPH() {
   const [tipeSurat, setTipeSurat] = useState("Masuk");
   const [isModalKeuOpen, setIsModalKeuOpen] = useState(false);
   const [kategoriKeu, setKategoriKeu] = useState("Bank");
-  const [isModalInvOpen, setIsModalInvOpen] = useState(false);
-  const [tipeInv, setTipeInv] = useState("Rekap");
 
   const [selectedKem, setSelectedKem] = useState<Kementerian | null>(null);
   const [detailTab, setDetailTab] = useState("surat");
@@ -101,8 +99,6 @@ export default function DashboardBPH() {
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState(""); 
   const previewRef = useRef<HTMLDivElement>(null); 
 
-  const [targetOrg, setTargetOrg] = useState("");
-  const [konteksIsu, setKonteksIsu] = useState("");
   const [notulenJudul, setNotulenJudul] = useState("");
   const [notulenTempat, setNotulenTempat] = useState("");
 
@@ -115,15 +111,17 @@ export default function DashboardBPH() {
   // --- FITUR BARU SURAT INDUK ---
   const [searchMasuk, setSearchMasuk] = useState("");
   const [searchKeluar, setSearchKeluar] = useState("");
-  const [editDataSurat, setEditDataSurat] = useState<any>(null); // Untuk data pre-fill Edit/AI
+  const [editDataSurat, setEditDataSurat] = useState<any>(null);
 
   // --- FITUR BARU KEUANGAN ---
   const [editDataKeu, setEditDataKeu] = useState<any>(null);
-  const [activeKegiatan, setActiveKegiatan] = useState(""); // Untuk dropdown filter Kepanitiaan
+  const [activeKegiatan, setActiveKegiatan] = useState(""); 
+  const [daftarKegiatanCustom, setDaftarKegiatanCustom] = useState<string[]>([]);
 
   const userRole = typeof window !== 'undefined' ? localStorage.getItem("userRole") : "";
 
-  // Dynamic import untuk pdfjsLib, agar tidak error saat SSR/Build di Vercel
+  // SEMUA FUNGSI HARUS DI SINI (Di dalam DashboardBPH, sebelum return JSX)
+
   const loadPdfjsLib = async () => {
     if (typeof window !== "undefined") {
       const pdfjsLib = await import("pdfjs-dist");
@@ -173,7 +171,6 @@ export default function DashboardBPH() {
     const unsubBphSM = onSnapshot(query(collection(db, "surat_masuk"), where("scope", "==", "bph")), snap => setBphSuratMasuk(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
     const unsubBphSK = onSnapshot(query(collection(db, "surat_keluar"), where("scope", "==", "bph")), snap => setBphSuratKeluar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
     
-    // Sortir Keuangan BPH berdasar Tanggal paling lama ke baru agar Saldo Akhir berurutan logic-nya
     const unsubBphKeu = onSnapshot(query(collection(db, "keuangan"), where("scope", "==", "bph")), snap => {
         const sortedData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a:any, b:any) => {
             const parseDate = (d:string) => d.includes('/') ? new Date(d.split('/').reverse().join('-')).getTime() : new Date(d).getTime();
@@ -181,9 +178,11 @@ export default function DashboardBPH() {
         });
         setBphKeuangan(sortedData);
         
-        // Auto set dropdown Kepanitiaan jika belum ada
         const listKepanitiaan = Array.from(new Set(sortedData.filter((k:any) => k.cat === "Kepanitiaan" && k.nama_kegiatan).map((k:any) => k.nama_kegiatan)));
-        if(listKepanitiaan.length > 0 && !activeKegiatan) setActiveKegiatan(listKepanitiaan[0] as string);
+        setActiveKegiatan(prev => {
+            if (!prev && listKepanitiaan.length > 0) return listKepanitiaan[0] as string;
+            return prev;
+        });
     });
 
     const unsubProker = onSnapshot(query(collection(db, "program_kerja"), where("scope", "==", "bph")), snap => setDaftarProker(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Proker[]));
@@ -209,7 +208,7 @@ export default function DashboardBPH() {
     });
 
     return () => { clearInterval(timer); unsubSuratMasukAll(); unsubSuratKeluarAll(); unsubKeuanganAll(); unsubKemAll(); unsubBphSM(); unsubBphSK(); unsubBphKeu(); unsubProker(); unsubWeb(); };
-  }, [userRole, activeKegiatan]);
+  }, [userRole]);
 
   useEffect(() => {
     if (!selectedKem) return;
@@ -219,9 +218,6 @@ export default function DashboardBPH() {
     return () => { unsubSM(); unsubSK(); unsubKeu(); };
   }, [selectedKem]);
 
-
-  // --- LOGIKA SURAT INDUK (SORTIR, FILTER, DELETE, EXPORT, OCR SCAN) ---
-
   const sortedMasuk = [...bphSuratMasuk]
     .filter(s => s.hal?.toLowerCase().includes(searchMasuk.toLowerCase()))
     .sort((a, b) => {
@@ -230,7 +226,7 @@ export default function DashboardBPH() {
         if (d.includes('/')) return new Date(d.split('/').reverse().join('-')).getTime();
         return new Date(d).getTime();
       };
-      return parseDate(b.tgl_datang || b.tgl_proses) - parseDate(a.tgl_datang || a.tgl_proses); // Tgl Datang Terbaru ke Lama
+      return parseDate(b.tgl_datang || b.tgl_proses) - parseDate(a.tgl_datang || a.tgl_proses); 
     });
 
   const sortedKeluar = [...bphSuratKeluar]
@@ -238,7 +234,7 @@ export default function DashboardBPH() {
     .sort((a, b) => {
       const noA = parseInt(a.no?.toString().replace(/\D/g, '') || "0");
       const noB = parseInt(b.no?.toString().replace(/\D/g, '') || "0");
-      return noA - noB; // Nomor Kecil ke Besar
+      return noA - noB; 
     });
 
   const handleDeleteSurat = async (id: string, tipe: string) => {
@@ -253,6 +249,10 @@ export default function DashboardBPH() {
       await deleteDoc(doc(db, "keuangan", id));
     }
   };
+
+  const formatRp = (angka: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(angka || 0);
+
+  const handleLogout = () => { if (confirm("Apakah Anda yakin ingin keluar?")) { localStorage.clear(); router.push("/login"); } };
 
   const exportToExcel = (data: any[], filename: string, tipe: string) => {
     const formattedData = data.map((s, i) => {
@@ -294,15 +294,18 @@ export default function DashboardBPH() {
     XLSX.writeFile(wb, `Laporan_Keuangan_${kategoriStr}_BPH.xlsx`);
   };
 
-  // --- FUNGSI TAMBAH KEGIATAN BARU ---
   const handleTambahKegiatan = () => {
     const namaBaru = prompt("Masukkan Nama Kepanitiaan/Kegiatan Baru:\n(Contoh: Ospek Universitas 2026)");
     if (namaBaru && namaBaru.trim() !== "") {
-      setActiveKegiatan(namaBaru.trim());
+      const nama = namaBaru.trim();
+      setDaftarKegiatanCustom(prev => {
+        if (!prev.includes(nama)) return [...prev, nama];
+        return prev;
+      });
+      setActiveKegiatan(nama);
     }
   };
 
-  // FUNGSI BARU MENGGUNAKAN TESSERACT.JS UNTUK SURAT
   const handleAIScanSurat = async (e: React.ChangeEvent<HTMLInputElement>, tipe: string) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -363,7 +366,6 @@ export default function DashboardBPH() {
     }
   };
 
-  // FUNGSI BARU MENGGUNAKAN TESSERACT.JS UNTUK NOTA KEUANGAN
   const handleAIScanKeuangan = async (e: React.ChangeEvent<HTMLInputElement>, kategoriStr: string) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -395,15 +397,12 @@ export default function DashboardBPH() {
 
       let extractedData: any = { uraian: "Hasil Scan Nota", nom: 0, tgl: "", ket: "Otomatis via OCR" };
       
-      // Ambil angka terbesar yang ada "Rp" atau titik/koma
       const nomMatch = text.match(/(?:Total|Jumlah|Rp)[\s\S]*?([0-9.,]+)/i);
       if (nomMatch && nomMatch[1]) extractedData.nom = nomMatch[1].replace(/\D/g, '');
 
-      // Ambil Tanggal
       const tglMatch = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/);
       if (tglMatch) extractedData.tgl = tglMatch[0].replace(/-/g, '/');
 
-      // Setup Data Khusus jika Kepanitiaan
       if (kategoriStr === "Kepanitiaan") {
          extractedData = { 
             ...extractedData, 
@@ -415,9 +414,9 @@ export default function DashboardBPH() {
             jumlah: extractedData.nom,
             nama_kegiatan: activeKegiatan || "Kegiatan Baru"
          };
-         extractedData.jenis = "Keluar"; // Default nota kepanitiaan
+         extractedData.jenis = "Keluar"; 
       } else {
-         extractedData.jenis = "Keluar"; // Default DIPA/Intern/Extern biasanya mencatat bukti pengeluaran
+         extractedData.jenis = "Keluar"; 
       }
 
       setEditDataKeu(extractedData);
@@ -458,7 +457,72 @@ export default function DashboardBPH() {
     }
   };
 
-  // Handler Gambar Interaktif
+  const triggerAiProcess = async (actionType: string, extractedText: string = "") => {
+    setIsAiLoading(true);
+    setAiResponse(""); 
+    let payloadData = {};
+
+    if (actionType === "notulen") {
+      if (!notulenJudul || !notulenTempat) { setIsAiLoading(false); return alert("Lengkapi data rapat terlebih dahulu!"); }
+      payloadData = { judul: notulenJudul, lokasi: notulenTempat, teksKasar: "Bismillah. Rapat tadi bahas soal proker. Harus ada divisi acara, humas, logistik. Humas cari media partner. Udah itu aja, kelar minggu depan." };
+    } else if (actionType === "smartletter") {
+       payloadData = { teksSurat: extractedText }; 
+    }
+
+    try {
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: actionType, payload: payloadData })
+      });
+      const data = await response.json();
+      
+      if (response.ok) { 
+        setAiResponse(data.result); 
+      } else { 
+        alert(`AI Error: ${data.error}\n\nDetail Teknis:\n${data.details || "Tidak ada detail tambahan"}`); 
+      }
+    } catch (error: any) {
+      alert(`Gagal terhubung ke API Server: ${error.message}`);
+    } finally { 
+      setIsAiLoading(false); 
+    }
+  };
+
+  const handleProcessSplitPDF = async () => {
+    if (!splitPdfFile) return alert("Upload file PDF master terlebih dahulu!");
+    if (!pdfSplitNames) return alert("Masukkan daftar nama file terlebih dahulu!");
+
+    setIsAiLoading(true);
+    try {
+      const arrayBuffer = await splitPdfFile.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(arrayBuffer);
+      const totalPages = pdfDoc.getPageCount();
+      const names = pdfSplitNames.split('\n').filter(n => n.trim() !== '');
+
+      if (names.length !== totalPages) {
+        alert(`Peringatan: Jumlah nama (${names.length}) tidak sama dengan halaman PDF (${totalPages}). Memproses sesuai jumlah yang paling sedikit.`);
+      }
+
+      const zip = new JSZip();
+      const limit = Math.min(names.length, totalPages);
+
+      for (let i = 0; i < limit; i++) {
+        const newPdf = await PDFDocument.create();
+        const [copiedPage] = await newPdf.copyPages(pdfDoc, [i]);
+        newPdf.addPage(copiedPage);
+        const pdfBytes = await newPdf.save();
+        zip.file(`${names[i]}.pdf`, pdfBytes);
+      }
+
+      const zipContent = await zip.generateAsync({ type: "blob" });
+      saveAs(zipContent, "Hasil_Split_PDF.zip");
+      alert("File ZIP berhasil dibuat dan diunduh otomatis!");
+    } catch (error) {
+      alert("Gagal memproses dan memotong PDF.");
+    } finally { setIsAiLoading(false); }
+  };
+
   const handleTtdKetuaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) { setTtdKetua(file); setTtdKetuaUrl(URL.createObjectURL(file)); }
@@ -472,7 +536,6 @@ export default function DashboardBPH() {
     if (file) { setStempel(file); setStempelUrl(URL.createObjectURL(file)); }
   };
 
-  // Preview PDF ke HTML Canvas
   const handlePdfMasterChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -490,10 +553,10 @@ export default function DashboardBPH() {
 
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      const lastPageNum = pdf.numPages; // Kita ambil halaman terakhir
+      const lastPageNum = pdf.numPages; 
       const page = await pdf.getPage(lastPageNum);
       
-      const viewport = page.getViewport({ scale: 1.5 }); // Resolusi lumayan jernih
+      const viewport = page.getViewport({ scale: 1.5 }); 
       const canvas = document.createElement("canvas");
       const context = canvas.getContext("2d");
       
@@ -502,7 +565,7 @@ export default function DashboardBPH() {
         canvas.width = viewport.width;
         // @ts-ignore
         await page.render({ canvasContext: context, viewport: viewport }).promise;
-        setPdfPreviewUrl(canvas.toDataURL("image/jpeg", 0.8)); // Jadikan background
+        setPdfPreviewUrl(canvas.toDataURL("image/jpeg", 0.8)); 
       } else {
         throw new Error("Browser tidak mendukung Canvas 2D.");
       }
@@ -515,8 +578,52 @@ export default function DashboardBPH() {
     }
   };
 
-  const handleLogout = () => { if (confirm("Apakah Anda yakin ingin keluar?")) { localStorage.clear(); router.push("/login"); } };
-  const formatRp = (angka: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(angka || 0);
+  const handleSignAndStamp = async () => {
+    if (!pdfMasterTtd) return alert("Upload file PDF Master terlebih dahulu!");
+    if (!previewRef.current) return alert("Kanvas preview belum siap.");
+
+    setIsAiLoading(true);
+    try {
+      const pdfBytes = await pdfMasterTtd.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(pdfBytes);
+      const pages = pdfDoc.getPages();
+      const lastPage = pages[pages.length - 1];
+      const { width: pdfWidth, height: pdfHeight } = lastPage.getSize();
+
+      const htmlWidth = previewRef.current.clientWidth;
+      const scaleRatio = pdfWidth / htmlWidth;
+
+      const drawImage = async (file: File, posInfo: any) => {
+        const imgBytes = await file.arrayBuffer();
+        let embeddedImg;
+        if (file.type === "image/png") {
+          embeddedImg = await pdfDoc.embedPng(imgBytes);
+        } else if (file.type === "image/jpeg" || file.type === "image/jpg") {
+          embeddedImg = await pdfDoc.embedJpg(imgBytes);
+        } else { throw new Error("Gunakan JPG atau PNG."); }
+        
+        const pdfX = posInfo.x * scaleRatio;
+        const pdfY = pdfHeight - ((posInfo.y + posInfo.h) * scaleRatio);
+        const pdfW = posInfo.w * scaleRatio;
+        const pdfH = posInfo.h * scaleRatio;
+
+        lastPage.drawImage(embeddedImg, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
+      };
+
+      if (ttdSekre) await drawImage(ttdSekre, posSekre);
+      if (ttdKetua) await drawImage(ttdKetua, posKetua);
+      if (stempel) await drawImage(stempel, posStempel);
+
+      const pdfSavedBytes = await pdfDoc.save();
+      const blob = new Blob([new Uint8Array(pdfSavedBytes)], { type: "application/pdf" });
+      saveAs(blob, `Signed_${pdfMasterTtd.name}`);
+      alert("Dokumen berhasil ditandatangani sesuai posisi!");
+    } catch (error: any) {
+      alert(`Gagal memproses: ${error.message}`);
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
 
   const handleSaveProker = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -624,122 +731,6 @@ export default function DashboardBPH() {
       setExcelFileName(""); 
     } catch (error) { alert("Gagal menyimpan pengaturan web."); } 
     finally { setIsSavingWeb(false); }
-  };
-
-  const triggerAiProcess = async (actionType: string, extractedText: string = "") => {
-    setIsAiLoading(true);
-    setAiResponse(""); 
-    let payloadData = {};
-
-    if (actionType === "notulen") {
-      if (!notulenJudul || !notulenTempat) { setIsAiLoading(false); return alert("Lengkapi data rapat terlebih dahulu!"); }
-      payloadData = { judul: notulenJudul, lokasi: notulenTempat, teksKasar: "Bismillah. Rapat tadi bahas soal proker. Harus ada divisi acara, humas, logistik. Humas cari media partner. Udah itu aja, kelar minggu depan." };
-    } else if (actionType === "smartletter") {
-       payloadData = { teksSurat: extractedText }; 
-    }
-
-    try {
-      const response = await fetch("/api/ai", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: actionType, payload: payloadData })
-      });
-      const data = await response.json();
-      
-      if (response.ok) { 
-        setAiResponse(data.result); 
-      } else { 
-        alert(`AI Error: ${data.error}\n\nDetail Teknis:\n${data.details || "Tidak ada detail tambahan"}`); 
-      }
-    } catch (error: any) {
-      alert(`Gagal terhubung ke API Server: ${error.message}`);
-    } finally { 
-      setIsAiLoading(false); 
-    }
-  };
-
-  const handleProcessSplitPDF = async () => {
-    if (!splitPdfFile) return alert("Upload file PDF master terlebih dahulu!");
-    if (!pdfSplitNames) return alert("Masukkan daftar nama file terlebih dahulu!");
-
-    setIsAiLoading(true);
-    try {
-      const arrayBuffer = await splitPdfFile.arrayBuffer();
-      const pdfDoc = await PDFDocument.load(arrayBuffer);
-      const totalPages = pdfDoc.getPageCount();
-      const names = pdfSplitNames.split('\n').filter(n => n.trim() !== '');
-
-      if (names.length !== totalPages) {
-        alert(`Peringatan: Jumlah nama (${names.length}) tidak sama dengan halaman PDF (${totalPages}). Memproses sesuai jumlah yang paling sedikit.`);
-      }
-
-      const zip = new JSZip();
-      const limit = Math.min(names.length, totalPages);
-
-      for (let i = 0; i < limit; i++) {
-        const newPdf = await PDFDocument.create();
-        const [copiedPage] = await newPdf.copyPages(pdfDoc, [i]);
-        newPdf.addPage(copiedPage);
-        const pdfBytes = await newPdf.save();
-        zip.file(`${names[i]}.pdf`, pdfBytes);
-      }
-
-      const zipContent = await zip.generateAsync({ type: "blob" });
-      saveAs(zipContent, "Hasil_Split_PDF.zip");
-      alert("File ZIP berhasil dibuat dan diunduh otomatis!");
-    } catch (error) {
-      alert("Gagal memproses dan memotong PDF.");
-    } finally { setIsAiLoading(false); }
-  };
-
-  // LOGIKA SIGN & STAMP DINAMIS (DRAG & DROP)
-  const handleSignAndStamp = async () => {
-    if (!pdfMasterTtd) return alert("Upload file PDF Master terlebih dahulu!");
-    if (!previewRef.current) return alert("Kanvas preview belum siap.");
-
-    setIsAiLoading(true);
-    try {
-      const pdfBytes = await pdfMasterTtd.arrayBuffer();
-      const pdfDoc = await PDFDocument.load(pdfBytes);
-      const pages = pdfDoc.getPages();
-      const lastPage = pages[pages.length - 1];
-      const { width: pdfWidth, height: pdfHeight } = lastPage.getSize();
-
-      // Mendapatkan skala kanvas HTML vs PDF asli
-      const htmlWidth = previewRef.current.clientWidth;
-      const scaleRatio = pdfWidth / htmlWidth;
-
-      const drawImage = async (file: File, posInfo: any) => {
-        const imgBytes = await file.arrayBuffer();
-        let embeddedImg;
-        if (file.type === "image/png") {
-          embeddedImg = await pdfDoc.embedPng(imgBytes);
-        } else if (file.type === "image/jpeg" || file.type === "image/jpg") {
-          embeddedImg = await pdfDoc.embedJpg(imgBytes);
-        } else { throw new Error("Gunakan JPG atau PNG."); }
-        
-        // Konversi Koordinat dari HTML (Top-Left) ke PDF (Bottom-Left)
-        const pdfX = posInfo.x * scaleRatio;
-        const pdfY = pdfHeight - ((posInfo.y + posInfo.h) * scaleRatio);
-        const pdfW = posInfo.w * scaleRatio;
-        const pdfH = posInfo.h * scaleRatio;
-
-        lastPage.drawImage(embeddedImg, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
-      };
-
-      if (ttdSekre) await drawImage(ttdSekre, posSekre);
-      if (ttdKetua) await drawImage(ttdKetua, posKetua);
-      if (stempel) await drawImage(stempel, posStempel);
-
-      const pdfSavedBytes = await pdfDoc.save();
-      const blob = new Blob([new Uint8Array(pdfSavedBytes)], { type: "application/pdf" });
-      saveAs(blob, `Signed_${pdfMasterTtd.name}`);
-      alert("Dokumen berhasil ditandatangani sesuai posisi!");
-    } catch (error: any) {
-      alert(`Gagal memproses: ${error.message}`);
-    } finally {
-      setIsAiLoading(false);
-    }
   };
 
   let bphSaldoBank = 0; let bphSaldoOps = 0;
@@ -1346,8 +1337,12 @@ export default function DashboardBPH() {
                const kepanitiaanData = bphKeuangan.filter(k => k.cat === "Kepanitiaan");
                const filteredData = kepanitiaanData.filter(k => k.nama_kegiatan === activeKegiatan);
                
-               // Hitung Total Seluruh Kegiatan
-               const listUniqKeg = Array.from(new Set(kepanitiaanData.filter(k => k.nama_kegiatan).map(k => k.nama_kegiatan)));
+               // Gabungkan kegiatan DB dan Draft
+               const listUniqKeg = Array.from(new Set([
+                 ...daftarKegiatanCustom,
+                 ...kepanitiaanData.filter(k => k.nama_kegiatan).map(k => k.nama_kegiatan)
+               ]));
+               
                let grandTotal = 0;
 
                return (
@@ -1370,11 +1365,11 @@ export default function DashboardBPH() {
                         <div className="d-flex align-items-center gap-2">
                           <label className="fw-bold text-nowrap m-0">Pilih Kegiatan:</label>
                           <select className="form-select form-select-sm shadow-sm fw-bold border-secondary text-primary" style={{minWidth: "250px", maxWidth: "350px"}} value={activeKegiatan} onChange={(e) => setActiveKegiatan(e.target.value)}>
-                             {listUniqKeg.length === 0 && !activeKegiatan ? <option value="">Belum ada kegiatan</option> : null}
-                             {activeKegiatan && !listUniqKeg.includes(activeKegiatan) && (
-                               <option value={activeKegiatan}>{activeKegiatan} (Draft Baru)</option>
-                             )}
-                             {listUniqKeg.map((keg, idx) => <option key={idx} value={keg as string}>{keg as string}</option>)}
+                             {listUniqKeg.length === 0 ? <option value="">Belum ada kegiatan</option> : null}
+                             {listUniqKeg.map((keg, idx) => {
+                                const isDraftOnly = daftarKegiatanCustom.includes(keg as string) && !kepanitiaanData.some(k => k.nama_kegiatan === keg);
+                                return <option key={idx} value={keg as string}>{keg as string} {isDraftOnly ? "(Draft Baru)" : ""}</option>
+                             })}
                           </select>
                         </div>
                         <button className="btn btn-sm btn-outline-dark fw-bold rounded-pill px-3 shadow-sm" onClick={handleTambahKegiatan}>
