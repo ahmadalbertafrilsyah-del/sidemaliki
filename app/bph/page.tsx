@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { db } from "@/lib/firebase";
-import { collection, onSnapshot, setDoc, doc, deleteDoc, query, where, addDoc } from "firebase/firestore";
+import { collection, onSnapshot, setDoc, doc, deleteDoc, updateDoc, query, where, addDoc } from "firebase/firestore";
 import * as XLSX from "xlsx"; 
 import { PDFDocument } from "pdf-lib";
 import JSZip from "jszip";
@@ -17,7 +17,7 @@ import ModalTambahKeuangan from "@/components/ModalTambahKeuangan";
 
 interface Kementerian { id: string; nama: string; email: string; password?: string; }
 interface Pengurus { nama: string; nim: string; jabatan: string; lembaga: string; }
-interface Proker { id: string; nama: string; tujuan: string; sasaran: string; kpi: string; scope: string; tgl: string; }
+interface Proker { id: string; nama: string; tujuan: string; sasaran: string; kpi: string; scope: string; tgl: string;pj?: string; anggaran?: string; waktu_pelaksanaan?: string; }
 
 export default function DashboardBPH() {
   const router = useRouter();
@@ -48,8 +48,6 @@ export default function DashboardBPH() {
   const [tipeSurat, setTipeSurat] = useState("Masuk");
   const [isModalKeuOpen, setIsModalKeuOpen] = useState(false);
   const [kategoriKeu, setKategoriKeu] = useState("Bank");
-  const [isModalInvOpen, setIsModalInvOpen] = useState(false);
-  const [tipeInv, setTipeInv] = useState("Rekap");
 
   const [selectedKem, setSelectedKem] = useState<Kementerian | null>(null);
   const [detailTab, setDetailTab] = useState("surat");
@@ -73,9 +71,13 @@ export default function DashboardBPH() {
   const [isSavingWeb, setIsSavingWeb] = useState(false);
 
   const [prokerTab, setProkerTab] = useState("umum"); 
-  const [daftarProker, setDaftarProker] = useState<Proker[]>([]);
+  const [daftarSemuaProker, setDaftarSemuaProker] = useState<Proker[]>([]); 
   const [showAddProker, setShowAddProker] = useState(false);
-  const [formProker, setFormProker] = useState({ nama: "", tujuan: "", sasaran: "", kpi: "" });
+  
+  const [editProkerId, setEditProkerId] = useState<string | null>(null);
+  const [formProker, setFormProker] = useState({ 
+    nama: "", tujuan: "", sasaran: "", kpi: "", pj: "", anggaran: "", waktu_pelaksanaan: "", scope: "bph" 
+  });
 
   const [aiTab, setAiTab] = useState("smartletter"); 
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -84,7 +86,6 @@ export default function DashboardBPH() {
   const [pdfSplitNames, setPdfSplitNames] = useState(""); 
   const [splitPdfFile, setSplitPdfFile] = useState<File | null>(null);
 
-  // --- STATE KHUSUS SIGN & STAMP (CANVAS INTERAKTIF) ---
   const [ttdKetua, setTtdKetua] = useState<File | null>(null);
   const [ttdKetuaUrl, setTtdKetuaUrl] = useState("");
   const [posKetua, setPosKetua] = useState({ x: 300, y: 550, w: 150, h: 80 });
@@ -101,31 +102,33 @@ export default function DashboardBPH() {
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState(""); 
   const previewRef = useRef<HTMLDivElement>(null); 
 
-  const [targetOrg, setTargetOrg] = useState("");
-  const [konteksIsu, setKonteksIsu] = useState("");
   const [notulenJudul, setNotulenJudul] = useState("");
   const [notulenTempat, setNotulenTempat] = useState("");
 
-  // --- STATE UNTUK MODAL DETAIL DASHBOARD ---
   const [dashboardModalContent, setDashboardModalContent] = useState<"surat" | "keuangan" | "kementerian" | "proker" | "pengurus" | null>(null);
   const [semuaSuratMasuk, setSemuaSuratMasuk] = useState<any[]>([]);
   const [semuaSuratKeluar, setSemuaSuratKeluar] = useState<any[]>([]);
   const [semuaKeuangan, setSemuaKeuangan] = useState<any[]>([]);
 
-  // --- FITUR BARU SURAT INDUK ---
   const [searchMasuk, setSearchMasuk] = useState("");
   const [searchKeluar, setSearchKeluar] = useState("");
   const [editDataSurat, setEditDataSurat] = useState<any>(null);
 
-  // --- FITUR BARU KEUANGAN ---
   const [editDataKeu, setEditDataKeu] = useState<any>(null);
   const [activeKegiatan, setActiveKegiatan] = useState(""); 
-  // STATE BARU: Untuk menyimpan daftar kegiatan custom/draft agar tidak hilang
   const [daftarKegiatanCustom, setDaftarKegiatanCustom] = useState<string[]>([]);
+
+  const [daftarPresensi, setDaftarPresensi] = useState<any[]>([]);
+  const [showAddPresensi, setShowAddPresensi] = useState(false);
+  const [formPresensi, setFormPresensi] = useState({ nama_kegiatan: "", tgl: "" });
+
+  const [showModalPeserta, setShowModalPeserta] = useState(false);
+  const [selectedPresensi, setSelectedPresensi] = useState<any>(null);
+  const [pesertaList, setPesertaList] = useState<any[]>([]);
+  const [isLoadingPeserta, setIsLoadingPeserta] = useState(false);
 
   const userRole = typeof window !== 'undefined' ? localStorage.getItem("userRole") : "";
 
-  // Dynamic import untuk pdfjsLib, agar tidak error saat SSR/Build di Vercel
   const loadPdfjsLib = async () => {
     if (typeof window !== "undefined") {
       const pdfjsLib = await import("pdfjs-dist");
@@ -175,7 +178,6 @@ export default function DashboardBPH() {
     const unsubBphSM = onSnapshot(query(collection(db, "surat_masuk"), where("scope", "==", "bph")), snap => setBphSuratMasuk(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
     const unsubBphSK = onSnapshot(query(collection(db, "surat_keluar"), where("scope", "==", "bph")), snap => setBphSuratKeluar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() }))));
     
-    // Sortir Keuangan BPH berdasar Tanggal paling lama ke baru agar Saldo Akhir berurutan logic-nya
     const unsubBphKeu = onSnapshot(query(collection(db, "keuangan"), where("scope", "==", "bph")), snap => {
         const sortedData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a:any, b:any) => {
             const parseDate = (d:string) => d.includes('/') ? new Date(d.split('/').reverse().join('-')).getTime() : new Date(d).getTime();
@@ -183,7 +185,6 @@ export default function DashboardBPH() {
         });
         setBphKeuangan(sortedData);
         
-        // Auto set dropdown Kepanitiaan (TIDAK AKAN MENIMPA DRAFT JIKA SEDANG ADA ISINYA)
         const listKepanitiaan = Array.from(new Set(sortedData.filter((k:any) => k.cat === "Kepanitiaan" && k.nama_kegiatan).map((k:any) => k.nama_kegiatan)));
         setActiveKegiatan(prev => {
             if (!prev && listKepanitiaan.length > 0) return listKepanitiaan[0] as string;
@@ -191,7 +192,19 @@ export default function DashboardBPH() {
         });
     });
 
-    const unsubProker = onSnapshot(query(collection(db, "program_kerja"), where("scope", "==", "bph")), snap => setDaftarProker(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Proker[]));
+    const unsubProker = onSnapshot(collection(db, "program_kerja"), snap => {
+       const allProker = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Proker[];
+       const sorted = allProker.sort((a,b) => {
+         const parseDate = (d:string) => d ? new Date(d.split('/').reverse().join('-')).getTime() : 0;
+         return parseDate(b.tgl) - parseDate(a.tgl);
+       });
+       setDaftarSemuaProker(sorted);
+    });
+
+    const unsubPresensi = onSnapshot(collection(db, "presensi"), snap => {
+       const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a:any, b:any) => (b.createdAt || 0) - (a.createdAt || 0));
+       setDaftarPresensi(data);
+    });
 
     const unsubWeb = onSnapshot(doc(db, "pengaturan", "beranda"), (docSnap) => {
       if (docSnap.exists()) {
@@ -204,17 +217,16 @@ export default function DashboardBPH() {
         setPoPptaFileName(data.poPptaFileName || "");
         setPoPptaFileUrl(data.poPptaUrl || ""); 
         setLinkGCal(data.linkGCal || ""); 
-        setDataPengurus(data.dataPengurus || []);
         
-        if (data.dataPengurus) {
-          const rawText = data.dataPengurus.map((p: Pengurus) => `${p.nama}\t${p.nim}\t${p.jabatan}\t${p.lembaga}`).join('\n');
-          setInputPengurusRaw(rawText);
+        if (data.dataPengurus && Array.isArray(data.dataPengurus)) {
+            setDataPengurus(data.dataPengurus);
+        } else {
+            setDataPengurus([]);
         }
       }
     });
 
-    // PENTING: activeKegiatan dihapus dari sini agar DB tidak me-render ulang dan menghapus isian draft Anda
-    return () => { clearInterval(timer); unsubSuratMasukAll(); unsubSuratKeluarAll(); unsubKeuanganAll(); unsubKemAll(); unsubBphSM(); unsubBphSK(); unsubBphKeu(); unsubProker(); unsubWeb(); };
+    return () => { clearInterval(timer); unsubSuratMasukAll(); unsubSuratKeluarAll(); unsubKeuanganAll(); unsubKemAll(); unsubBphSM(); unsubBphSK(); unsubBphKeu(); unsubProker(); unsubPresensi(); unsubWeb(); };
   }, [userRole]); 
 
   useEffect(() => {
@@ -225,8 +237,20 @@ export default function DashboardBPH() {
     return () => { unsubSM(); unsubSK(); unsubKeu(); };
   }, [selectedKem]);
 
-
-  // --- LOGIKA SURAT INDUK (SORTIR, FILTER, DELETE, EXPORT, OCR SCAN) ---
+  useEffect(() => {
+    if (!selectedPresensi) {
+      setPesertaList([]);
+      return;
+    }
+    setIsLoadingPeserta(true);
+    const q = query(collection(db, "presensi", selectedPresensi.id, "peserta"));
+    const unsub = onSnapshot(q, (snap) => {
+       const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a:any, b:any) => (b.timestamp || 0) - (a.timestamp || 0));
+       setPesertaList(data);
+       setIsLoadingPeserta(false);
+    });
+    return () => unsub();
+  }, [selectedPresensi]);
 
   const sortedMasuk = [...bphSuratMasuk]
     .filter(s => s.hal?.toLowerCase().includes(searchMasuk.toLowerCase()))
@@ -236,7 +260,7 @@ export default function DashboardBPH() {
         if (d.includes('/')) return new Date(d.split('/').reverse().join('-')).getTime();
         return new Date(d).getTime();
       };
-      return parseDate(b.tgl_datang || b.tgl_proses) - parseDate(a.tgl_datang || a.tgl_proses); // Tgl Datang Terbaru ke Lama
+      return parseDate(b.tgl_datang || b.tgl_proses) - parseDate(a.tgl_datang || a.tgl_proses); 
     });
 
   const sortedKeluar = [...bphSuratKeluar]
@@ -244,7 +268,7 @@ export default function DashboardBPH() {
     .sort((a, b) => {
       const noA = parseInt(a.no?.toString().replace(/\D/g, '') || "0");
       const noB = parseInt(b.no?.toString().replace(/\D/g, '') || "0");
-      return noA - noB; // Nomor Kecil ke Besar
+      return noA - noB; 
     });
 
   const handleDeleteSurat = async (id: string, tipe: string) => {
@@ -259,6 +283,10 @@ export default function DashboardBPH() {
       await deleteDoc(doc(db, "keuangan", id));
     }
   };
+
+  const formatRp = (angka: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(angka || 0);
+
+  const handleLogout = () => { if (confirm("Apakah Anda yakin ingin keluar?")) { localStorage.clear(); router.push("/login"); } };
 
   const exportToExcel = (data: any[], filename: string, tipe: string) => {
     const formattedData = data.map((s, i) => {
@@ -300,12 +328,10 @@ export default function DashboardBPH() {
     XLSX.writeFile(wb, `Laporan_Keuangan_${kategoriStr}_BPH.xlsx`);
   };
 
-  // --- FUNGSI TAMBAH KEGIATAN BARU ---
   const handleTambahKegiatan = () => {
     const namaBaru = prompt("Masukkan Nama Kepanitiaan/Kegiatan Baru:\n(Contoh: Ospek Universitas 2026)");
     if (namaBaru && namaBaru.trim() !== "") {
       const nama = namaBaru.trim();
-      // Menyimpan kegiatan baru ke draft UI agar tidak hilang
       setDaftarKegiatanCustom(prev => {
         if (!prev.includes(nama)) return [...prev, nama];
         return prev;
@@ -314,7 +340,6 @@ export default function DashboardBPH() {
     }
   };
 
-  // FUNGSI BARU MENGGUNAKAN TESSERACT.JS UNTUK SURAT
   const handleAIScanSurat = async (e: React.ChangeEvent<HTMLInputElement>, tipe: string) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -375,7 +400,6 @@ export default function DashboardBPH() {
     }
   };
 
-  // FUNGSI BARU MENGGUNAKAN TESSERACT.JS UNTUK NOTA KEUANGAN
   const handleAIScanKeuangan = async (e: React.ChangeEvent<HTMLInputElement>, kategoriStr: string) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -407,15 +431,12 @@ export default function DashboardBPH() {
 
       let extractedData: any = { uraian: "Hasil Scan Nota", nom: 0, tgl: "", ket: "Otomatis via OCR" };
       
-      // Ambil angka terbesar yang ada "Rp" atau titik/koma
       const nomMatch = text.match(/(?:Total|Jumlah|Rp)[\s\S]*?([0-9.,]+)/i);
       if (nomMatch && nomMatch[1]) extractedData.nom = nomMatch[1].replace(/\D/g, '');
 
-      // Ambil Tanggal
       const tglMatch = text.match(/\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/);
       if (tglMatch) extractedData.tgl = tglMatch[0].replace(/-/g, '/');
 
-      // Setup Data Khusus jika Kepanitiaan
       if (kategoriStr === "Kepanitiaan") {
          extractedData = { 
             ...extractedData, 
@@ -427,9 +448,9 @@ export default function DashboardBPH() {
             jumlah: extractedData.nom,
             nama_kegiatan: activeKegiatan || "Kegiatan Baru"
          };
-         extractedData.jenis = "Keluar"; // Default nota kepanitiaan
+         extractedData.jenis = "Keluar"; 
       } else {
-         extractedData.jenis = "Keluar"; // Default DIPA/Intern/Extern biasanya mencatat bukti pengeluaran
+         extractedData.jenis = "Keluar"; 
       }
 
       setEditDataKeu(extractedData);
@@ -536,56 +557,6 @@ export default function DashboardBPH() {
     } finally { setIsAiLoading(false); }
   };
 
-  // LOGIKA SIGN & STAMP DINAMIS (DRAG & DROP)
-  const handleSignAndStamp = async () => {
-    if (!pdfMasterTtd) return alert("Upload file PDF Master terlebih dahulu!");
-    if (!previewRef.current) return alert("Kanvas preview belum siap.");
-
-    setIsAiLoading(true);
-    try {
-      const pdfBytes = await pdfMasterTtd.arrayBuffer();
-      const pdfDoc = await PDFDocument.load(pdfBytes);
-      const pages = pdfDoc.getPages();
-      const lastPage = pages[pages.length - 1];
-      const { width: pdfWidth, height: pdfHeight } = lastPage.getSize();
-
-      // Mendapatkan skala kanvas HTML vs PDF asli
-      const htmlWidth = previewRef.current.clientWidth;
-      const scaleRatio = pdfWidth / htmlWidth;
-
-      const drawImage = async (file: File, posInfo: any) => {
-        const imgBytes = await file.arrayBuffer();
-        let embeddedImg;
-        if (file.type === "image/png") {
-          embeddedImg = await pdfDoc.embedPng(imgBytes);
-        } else if (file.type === "image/jpeg" || file.type === "image/jpg") {
-          embeddedImg = await pdfDoc.embedJpg(imgBytes);
-        } else { throw new Error("Gunakan JPG atau PNG."); }
-        
-        // Konversi Koordinat dari HTML (Top-Left) ke PDF (Bottom-Left)
-        const pdfX = posInfo.x * scaleRatio;
-        const pdfY = pdfHeight - ((posInfo.y + posInfo.h) * scaleRatio);
-        const pdfW = posInfo.w * scaleRatio;
-        const pdfH = posInfo.h * scaleRatio;
-
-        lastPage.drawImage(embeddedImg, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
-      };
-
-      if (ttdSekre) await drawImage(ttdSekre, posSekre);
-      if (ttdKetua) await drawImage(ttdKetua, posKetua);
-      if (stempel) await drawImage(stempel, posStempel);
-
-      const pdfSavedBytes = await pdfDoc.save();
-      const blob = new Blob([new Uint8Array(pdfSavedBytes)], { type: "application/pdf" });
-      saveAs(blob, `Signed_${pdfMasterTtd.name}`);
-      alert("Dokumen berhasil ditandatangani sesuai posisi!");
-    } catch (error: any) {
-      alert(`Gagal memproses: ${error.message}`);
-    } finally {
-      setIsAiLoading(false);
-    }
-  };
-
   const handleTtdKetuaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) { setTtdKetua(file); setTtdKetuaUrl(URL.createObjectURL(file)); }
@@ -616,10 +587,10 @@ export default function DashboardBPH() {
 
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      const lastPageNum = pdf.numPages; // Kita ambil halaman terakhir
+      const lastPageNum = pdf.numPages; 
       const page = await pdf.getPage(lastPageNum);
       
-      const viewport = page.getViewport({ scale: 1.5 }); // Resolusi lumayan jernih
+      const viewport = page.getViewport({ scale: 1.5 }); 
       const canvas = document.createElement("canvas");
       const context = canvas.getContext("2d");
       
@@ -628,7 +599,7 @@ export default function DashboardBPH() {
         canvas.width = viewport.width;
         // @ts-ignore
         await page.render({ canvasContext: context, viewport: viewport }).promise;
-        setPdfPreviewUrl(canvas.toDataURL("image/jpeg", 0.8)); // Jadikan background
+        setPdfPreviewUrl(canvas.toDataURL("image/jpeg", 0.8)); 
       } else {
         throw new Error("Browser tidak mendukung Canvas 2D.");
       }
@@ -641,22 +612,100 @@ export default function DashboardBPH() {
     }
   };
 
-  const handleLogout = () => { if (confirm("Apakah Anda yakin ingin keluar?")) { localStorage.clear(); router.push("/login"); } };
-  const formatRp = (angka: number) => new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(angka || 0);
+  const handleSignAndStamp = async () => {
+    if (!pdfMasterTtd) return alert("Upload file PDF Master terlebih dahulu!");
+    if (!previewRef.current) return alert("Kanvas preview belum siap.");
+
+    setIsAiLoading(true);
+    try {
+      const pdfBytes = await pdfMasterTtd.arrayBuffer();
+      const pdfDoc = await PDFDocument.load(pdfBytes);
+      const pages = pdfDoc.getPages();
+      const lastPage = pages[pages.length - 1];
+      const { width: pdfWidth, height: pdfHeight } = lastPage.getSize();
+
+      const htmlWidth = previewRef.current.clientWidth;
+      const scaleRatio = pdfWidth / htmlWidth;
+
+      const drawImage = async (file: File, posInfo: any) => {
+        const imgBytes = await file.arrayBuffer();
+        let embeddedImg;
+        if (file.type === "image/png") {
+          embeddedImg = await pdfDoc.embedPng(imgBytes);
+        } else if (file.type === "image/jpeg" || file.type === "image/jpg") {
+          embeddedImg = await pdfDoc.embedJpg(imgBytes);
+        } else { throw new Error("Gunakan JPG atau PNG."); }
+        
+        const pdfX = posInfo.x * scaleRatio;
+        const pdfY = pdfHeight - ((posInfo.y + posInfo.h) * scaleRatio);
+        const pdfW = posInfo.w * scaleRatio;
+        const pdfH = posInfo.h * scaleRatio;
+
+        lastPage.drawImage(embeddedImg, { x: pdfX, y: pdfY, width: pdfW, height: pdfH });
+      };
+
+      if (ttdSekre) await drawImage(ttdSekre, posSekre);
+      if (ttdKetua) await drawImage(ttdKetua, posKetua);
+      if (stempel) await drawImage(stempel, posStempel);
+
+      const pdfSavedBytes = await pdfDoc.save();
+      const blob = new Blob([new Uint8Array(pdfSavedBytes)], { type: "application/pdf" });
+      saveAs(blob, `Signed_${pdfMasterTtd.name}`);
+      alert("Dokumen berhasil ditandatangani sesuai posisi!");
+    } catch (error: any) {
+      alert(`Gagal memproses: ${error.message}`);
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
 
   const handleSaveProker = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formProker.nama || !formProker.tujuan || !formProker.sasaran || !formProker.kpi) return alert("Semua bidang wajib diisi!");
     try {
-      await addDoc(collection(db, "program_kerja"), { ...formProker, scope: "bph", tgl: new Date().toLocaleDateString("id-ID") });
-      alert("Program Kerja berhasil disimpan!");
-      setFormProker({ nama: "", tujuan: "", sasaran: "", kpi: "" });
+      if (editProkerId) {
+         await updateDoc(doc(db, "program_kerja", editProkerId), { 
+             ...formProker, 
+             updatedAt: Date.now() 
+         });
+         alert("Program Kerja berhasil diperbarui!");
+      } else {
+         await addDoc(collection(db, "program_kerja"), { 
+             ...formProker, 
+             tgl: new Date().toLocaleDateString("id-ID"),
+             createdAt: Date.now()
+         });
+         alert("Program Kerja berhasil disimpan!");
+      }
+      
+      setFormProker({ nama: "", tujuan: "", sasaran: "", kpi: "", pj: "", anggaran: "", waktu_pelaksanaan: "", scope: "bph" });
+      setEditProkerId(null);
       setShowAddProker(false);
-    } catch (error) { alert("Gagal menyimpan program kerja."); }
+    } catch (error) { 
+      alert("Gagal menyimpan program kerja."); 
+      console.error(error);
+    }
   };
 
+  const handleEditProker = (p: Proker) => {
+      setFormProker({
+          nama: p.nama || "",
+          tujuan: p.tujuan || "",
+          sasaran: p.sasaran || "",
+          kpi: p.kpi || "",
+          pj: p.pj || "",
+          anggaran: p.anggaran || "",
+          waktu_pelaksanaan: p.waktu_pelaksanaan || "",
+          scope: p.scope || "bph"
+      });
+      setEditProkerId(p.id);
+      setShowAddProker(true);
+  }
+
   const handleDeleteProker = async (id: string) => {
-    if (confirm("Yakin ingin menghapus program kerja ini?")) await deleteDoc(doc(db, "program_kerja", id));
+    if (confirm("Yakin ingin menghapus program kerja ini?")) {
+        await deleteDoc(doc(db, "program_kerja", id));
+    }
   };
 
   const handleAddKementerian = async (e: React.FormEvent) => {
@@ -703,6 +752,7 @@ export default function DashboardBPH() {
       setDataPengurus(parsedPengurus);
     };
     reader.readAsArrayBuffer(file);
+    e.target.value = "";
   };
 
   const handlePoPptaUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -734,22 +784,65 @@ export default function DashboardBPH() {
   };
 
   const handleSaveWebSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     setIsSavingWeb(true);
-    const parsedPengurus = inputPengurusRaw.split('\n').filter(line => line.trim() !== '').map(line => {
-        const parts = line.split('\t'); 
-        return { nama: parts[0] || "-", nim: parts[1] || "-", jabatan: parts[2] || "-", lembaga: parts[3] || "-" };
-      });
     try {
       await setDoc(doc(db, "pengaturan", "beranda"), {
         grandDesign: webGrandDesign, visi: webVisi, misi: webMisi, proker: webProker, 
         poPptaFileName: poPptaFileName, poPptaUrl: poPptaFileUrl, linkGCal: linkGCal, 
-        dataPengurus: parsedPengurus, updatedAt: Date.now()
+        dataPengurus: dataPengurus, 
+        updatedAt: Date.now()
       }, { merge: true });
       alert("Pengaturan Web & Susunan Kepengurusan berhasil diperbarui!");
       setExcelFileName(""); 
     } catch (error) { alert("Gagal menyimpan pengaturan web."); } 
     finally { setIsSavingWeb(false); }
+  };
+
+  const handleSavePresensi = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formPresensi.nama_kegiatan || !formPresensi.tgl) return alert("Nama kegiatan dan tanggal wajib diisi!");
+    try {
+      await addDoc(collection(db, "presensi"), {
+        ...formPresensi,
+        createdAt: Date.now(),
+        pembuat: "BPH"
+      });
+      alert("Link Presensi berhasil dibuat!");
+      setFormPresensi({ nama_kegiatan: "", tgl: "" });
+      setShowAddPresensi(false);
+    } catch (error) {
+      alert("Gagal membuat link presensi.");
+    }
+  };
+
+  const handleDeletePresensi = async (id: string) => {
+    if (confirm("Yakin ingin menghapus form presensi ini? Data peserta yang sudah absen tidak bisa dilihat lagi!")) {
+      await deleteDoc(doc(db, "presensi", id));
+    }
+  };
+
+  const handleCopyLink = (id: string) => {
+    const link = `${window.location.origin}/presensi/${id}`;
+    navigator.clipboard.writeText(link);
+    alert("Link presensi berhasil disalin!\nBagikan link ini ke pengurus: \n" + link);
+  };
+
+  const exportPesertaToExcel = () => {
+    if(!selectedPresensi || pesertaList.length === 0) return alert("Belum ada data peserta untuk diunduh.");
+    const formattedData = pesertaList.map((p, i) => ({
+      "No": i + 1,
+      "Nama Pengurus": p.nama,
+      "Jabatan": p.jabatan,
+      "Kementerian / Lembaga": p.kementerian,
+      "Waktu Absen": p.waktu_absen,
+      "Link Foto Kehadiran": p.fotoUrl,
+      "Link Tanda Tangan": p.ttdUrl
+    }));
+    const ws = XLSX.utils.json_to_sheet(formattedData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Data Kehadiran");
+    XLSX.writeFile(wb, `Presensi_${selectedPresensi.nama_kegiatan.replace(/\s+/g, '_')}.xlsx`);
   };
 
   let bphSaldoBank = 0; let bphSaldoOps = 0;
@@ -759,6 +852,16 @@ export default function DashboardBPH() {
     acc[curr.lembaga].push(curr);
     return acc;
   }, {} as Record<string, Pengurus[]>);
+
+  const groupedProkers = daftarSemuaProker.reduce((acc, curr) => {
+      const scopeLabel = curr.scope === "bph" ? "Badan Pengurus Harian (BPH)" : 
+         listKementerian.find(k => k.id === curr.scope)?.nama || curr.scope;
+      
+      if (!acc[scopeLabel]) acc[scopeLabel] = [];
+      acc[scopeLabel].push(curr);
+      return acc;
+  }, {} as Record<string, Proker[]>);
+
 
   // --- KUMPULAN MODAL RENDERER ---
   const renderDashboardModal = () => {
@@ -862,7 +965,6 @@ export default function DashboardBPH() {
           <div className="row g-3">
              {listKementerian.length === 0 ? <p className="text-muted small">Belum ada kementerian yang terdaftar.</p> : 
                listKementerian.map((kem, idx) => {
-                 // Hitung jumlah pengurus per kementerian berdasarkan excel
                  const jmlPengurus = dataPengurus.filter(p => p.lembaga.toLowerCase().includes(kem.nama.toLowerCase()) || kem.nama.toLowerCase().includes(p.lembaga.toLowerCase())).length;
                  
                  return (
@@ -896,10 +998,10 @@ export default function DashboardBPH() {
             {webProker || "Belum ada catatan fokus program kerja yang diatur di Pengaturan Web."}
           </p>
 
-          <h6 className="fw-bold text-secondary mb-3">Daftar Proker Terencana:</h6>
-          {daftarProker.length === 0 ? <p className="text-muted small">Belum ada proker ditambahkan ke kalender.</p> : 
+          <h6 className="fw-bold text-secondary mb-3">Semua Proker Organisasi:</h6>
+          {daftarSemuaProker.length === 0 ? <p className="text-muted small">Belum ada proker ditambahkan ke kalender.</p> : 
             <div className="row g-3">
-              {daftarProker.map((p, idx) => (
+              {daftarSemuaProker.slice(0, 5).map((p, idx) => (
                 <div className="col-12" key={idx}>
                   <div className="card shadow-sm border-0 border-start border-4 border-dark bg-light">
                     <div className="card-body py-3 px-4">
@@ -907,11 +1009,8 @@ export default function DashboardBPH() {
                          <h6 className="fw-bold m-0 text-dark">{p.nama}</h6>
                          <span className="badge bg-white text-dark border shadow-sm">{p.tgl}</span>
                       </div>
-                      <p className="small text-muted mb-2 lh-base">{p.tujuan}</p>
-                      <div className="d-flex gap-2 mt-2">
-                        <span className="badge bg-dark bg-opacity-10 text-dark border-0 px-2 py-1" style={{fontSize: "0.7rem"}}><i className="fas fa-bullseye me-1 text-primary"></i>{p.sasaran}</span>
-                        <span className="badge bg-success bg-opacity-10 text-success border-0 px-2 py-1" style={{fontSize: "0.7rem"}}><i className="fas fa-chart-line me-1"></i>KPI: {p.kpi}</span>
-                      </div>
+                      <div className="small text-primary fw-bold mb-1"><i className="fas fa-sitemap me-1"></i> {p.scope === 'bph' ? 'BPH' : p.scope}</div>
+                      <p className="small text-muted mb-2 lh-base text-truncate">{p.tujuan}</p>
                     </div>
                   </div>
                 </div>
@@ -985,7 +1084,7 @@ export default function DashboardBPH() {
         .sidebar-menu .nav-link:hover { background: var(--active-bg); color: var(--active-text); }
         .sidebar-menu .nav-link.active { background: var(--text-dark); color: #ffffff; box-shadow: 0 4px 10px rgba(15, 23, 42, 0.15); }
         
-        .main-header { position: fixed; top: 0; left: 280px; right: 0; height: 70px; background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: space-between; padding: 0 20px; z-index: 1000; transition: 0.4s; border-bottom: 1px solid var(--sidebar-border); }
+        .main-header { position: fixed; top: 0; left: 280px; right: 0; height: 70px; background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); z-index: 1000; transition: 0.4s; border-bottom: 1px solid var(--sidebar-border); }
         .content-wrapper { margin-top: 70px; margin-left: 280px; padding: 30px; transition: 0.4s; min-height: 100vh; }
         
         .info-box { background: var(--card-bg); border-radius: 20px; padding: 25px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 20px rgba(15, 23, 42, 0.04); border: 1px solid var(--sidebar-border); transition: all 0.3s ease; cursor: pointer; }
@@ -1014,7 +1113,40 @@ export default function DashboardBPH() {
         .table-light { background-color: #f8fafc; color: var(--text-muted); text-transform: uppercase; font-size: 0.8rem; letter-spacing: 0.5px; }
         
         .mobile-overlay { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.6); z-index: 1030; display: none; backdrop-filter: blur(3px); }
-        @media (max-width: 992px) { .sidebar { transform: translateX(-100%); } .sidebar.active { transform: translateX(0); } .main-header { left: 0; } .content-wrapper { margin-left: 0; } .sidebar.active ~ .mobile-overlay { display: block; } }
+        
+        /* GAYA KHUSUS RESPONSIVE MOBILE */
+        @media (max-width: 992px) { 
+          .sidebar { transform: translateX(-100%); } 
+          .sidebar.active { transform: translateX(0); } 
+          .main-header { left: 0; } 
+          .content-wrapper { margin-left: 0; } 
+          .sidebar.active ~ .mobile-overlay { display: block; } 
+        }
+
+        @media (max-width: 768px) {
+          body { font-size: 0.85rem; }
+          .content-wrapper { padding: 15px; margin-top: 65px; }
+          h3 { font-size: 1.4rem; }
+          h4 { font-size: 1.2rem; }
+          h5 { font-size: 1.1rem; }
+          h6 { font-size: 1rem; }
+          .btn { font-size: 0.8rem; padding: 0.4rem 0.8rem; }
+          .table { font-size: 0.75rem; }
+          .table th, .table td { padding: 0.5rem; }
+          .info-box { padding: 15px; border-radius: 15px; }
+          .info-box h2 { font-size: 1.5rem; }
+          .info-box .icon-circle { width: 45px; height: 45px; font-size: 1.2rem; border-radius: 12px; }
+          .glass-card { padding: 20px !important; border-radius: 15px; }
+          .nav-pills { gap: 0.5rem !important; }
+          .nav-pills .nav-link { padding: 6px 12px; font-size: 0.75rem; }
+          .card-body { padding: 15px !important; }
+          .form-control, .form-select { font-size: 0.85rem; padding: 0.4rem 0.8rem; }
+          .ai-tabs .nav-link { padding: 8px 12px; font-size: 0.75rem; margin-bottom: 5px; }
+          
+          /* Horizontal scroll menu untuk tab di HP */
+          .scroll-menu-mobile { display: flex; overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; padding-bottom: 5px; scrollbar-width: none; }
+          .scroll-menu-mobile::-webkit-scrollbar { display: none; }
+        }
         
         /* Gaya untuk area drag & drop TTD */
         .pdf-preview-container { position: relative; display: inline-block; width: 100%; max-width: 700px; border: 1px solid #cbd5e1; border-radius: 8px; overflow: hidden; background: #f8fafc; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
@@ -1026,6 +1158,62 @@ export default function DashboardBPH() {
 
       {/* RENDER MODAL DASHBOARD JIKA ADA */}
       {renderDashboardModal()}
+
+      {/* RENDER MODAL DATA KEHADIRAN PESERTA PRESENSI */}
+      {showModalPeserta && selectedPresensi && (
+        <div className="modal-backdrop" style={{position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", background: "rgba(15,23,42,0.6)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(5px)"}}>
+          <div className="bg-white rounded-4 shadow-lg w-100 overflow-hidden animate-fade-in-up" style={{maxWidth: "900px", maxHeight: "90vh", display: "flex", flexDirection: "column"}}>
+            <div className="p-4 border-bottom d-flex justify-content-between align-items-center bg-light">
+               <div>
+                  <h5 className="fw-bolder m-0 text-dark">Data Kehadiran: {selectedPresensi.nama_kegiatan}</h5>
+                  <small className="text-muted">{selectedPresensi.tgl}</small>
+               </div>
+               <div>
+                  <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 me-2 shadow-sm" onClick={exportPesertaToExcel}><i className="fas fa-file-excel me-1"></i> Excel</button>
+                  <button className="btn btn-outline-danger btn-sm rounded-circle" onClick={() => { setShowModalPeserta(false); setSelectedPresensi(null); }}><i className="fas fa-times"></i></button>
+               </div>
+            </div>
+            <div className="p-0 overflow-y-auto" style={{flex: 1}}>
+               {isLoadingPeserta ? (
+                   <div className="text-center py-5"><i className="fas fa-spinner fa-spin fa-2x text-secondary"></i><p className="mt-2 text-muted">Memuat data...</p></div>
+               ) : (
+                  <div className="table-responsive m-0">
+                    <table className="table table-hover align-middle mb-0 text-nowrap">
+                      <thead className="table-light">
+                        <tr><th className="px-4">No</th><th>Nama Pengurus</th><th>Jabatan</th><th>Lembaga</th><th>Waktu Absen</th><th>Foto</th><th>TTD</th></tr>
+                      </thead>
+                      <tbody>
+                        {pesertaList.length === 0 ? (
+                          <tr><td colSpan={7} className="text-center py-5 text-muted">Belum ada peserta yang mengisi presensi.</td></tr>
+                        ) : (
+                          pesertaList.map((p, idx) => (
+                            <tr key={p.id}>
+                              <td className="text-center text-secondary px-4">{idx + 1}</td>
+                              <td className="fw-bold text-dark">{p.nama}</td>
+                              <td>{p.jabatan}</td>
+                              <td>{p.kementerian}</td>
+                              <td className="small text-secondary">{p.waktu_absen}</td>
+                              <td>
+                                 <a href={p.fotoUrl} target="_blank" rel="noreferrer">
+                                    <img src={p.fotoUrl} alt="Foto" style={{height: "45px", width: "45px", objectFit: "cover", borderRadius: "8px", border: "1px solid #dee2e6"}} className="hover-elevate" />
+                                 </a>
+                              </td>
+                              <td>
+                                 <a href={p.ttdUrl} target="_blank" rel="noreferrer">
+                                    <img src={p.ttdUrl} alt="TTD" style={{height: "45px", background: "#f8f9fa", borderRadius: "8px", border: "1px solid #dee2e6"}} className="hover-elevate" />
+                                 </a>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+               )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <aside className={`sidebar ${isSidebarOpen ? "active" : ""}`}>
         <div className="sidebar-brand">
@@ -1043,6 +1231,9 @@ export default function DashboardBPH() {
           <li><a className={`nav-link ${activeMenu === "admin_surat" ? "active" : ""}`} onClick={() => { setActiveMenu("admin_surat"); setIsSidebarOpen(false); }}><i className="fas fa-envelope"></i> <span>Surat Induk</span></a></li>
           <li><a className={`nav-link ${activeMenu === "admin_keuangan" ? "active" : ""}`} onClick={() => { setActiveMenu("admin_keuangan"); setIsSidebarOpen(false); }}><i className="fas fa-wallet"></i> <span>Keuangan Pusat</span></a></li>
           
+          {/* MENU BARU: PRESENSI KEGIATAN */}
+          <li><a className={`nav-link ${activeMenu === "presensi" ? "active" : ""}`} onClick={() => { setActiveMenu("presensi"); setIsSidebarOpen(false); }}><i className="fas fa-clipboard-list"></i> <span>Presensi Kegiatan</span></a></li>
+
           <li className="sidebar-heading">Data Organisasi</li>
           <li><a className={`nav-link ${activeMenu === "kepengurusan" ? "active" : ""}`} onClick={() => { setActiveMenu("kepengurusan"); setIsSidebarOpen(false); }}><i className="fas fa-sitemap"></i> <span>Susunan Pengurus</span></a></li>
           <li><a className={`nav-link ${activeMenu === "proker" ? "active" : ""}`} onClick={() => { setActiveMenu("proker"); setIsSidebarOpen(false); }}><i className="fas fa-calendar-check"></i> <span>Program Kerja</span></a></li>
@@ -1059,17 +1250,35 @@ export default function DashboardBPH() {
 
       {isSidebarOpen && <div className="mobile-overlay" onClick={() => setIsSidebarOpen(false)}></div>}
 
-      <header className="main-header">
+      <header className="main-header d-flex justify-content-between align-items-center">
+        {/* KIRI: Tombol Menu (Mobile) & Waktu (Desktop) */}
         <div className="d-flex align-items-center">
-          <button className="btn btn-light d-lg-none me-3 border shadow-sm" onClick={() => setIsSidebarOpen(true)}><i className="fas fa-bars"></i></button>
-          <div className="d-none d-md-flex align-items-center text-secondary fw-bold bg-light px-3 py-2 rounded-pill small border"><i className="far fa-clock me-2 text-dark"></i> {currentTime || "Memuat waktu..."}</div>
-        </div>
-        <div className="d-flex align-items-center gap-3">
-          <div className="text-end d-none d-sm-block">
-            <h6 className="m-0 fw-bolder text-dark">DEMA UIN MALANG</h6>
-            <small className="text-muted fw-500">Badan Pengurus Harian</small>
+          <button className="btn btn-light d-lg-none me-2 border shadow-sm" onClick={() => setIsSidebarOpen(true)}>
+            <i className="fas fa-bars"></i>
+          </button>
+          <div className="d-none d-lg-flex align-items-center text-secondary fw-bold bg-light px-3 py-2 rounded-pill small border">
+            <i className="far fa-clock me-2 text-dark"></i> {currentTime || "Memuat waktu..."}
           </div>
-          <div className="rounded-circle bg-dark text-white d-flex align-items-center justify-content-center fw-bold shadow" style={{ width: "45px", height: "45px", border: "2px solid #e2e8f0" }}>BP</div>
+        </div>
+
+        {/* TENGAH: Logo & Waktu (KHUSUS MOBILE) */}
+        <div className="d-flex d-lg-none flex-column align-items-center justify-content-center position-absolute start-50 translate-middle-x">
+           <div className="d-flex align-items-center gap-2">
+              <img src="https://i.ibb.co.com/gFhcwFzr/icon.png" alt="Logo" style={{ width: "24px", height: "24px", objectFit: "contain" }} />
+              <span className="fw-bolder text-dark" style={{ fontSize: "0.9rem", letterSpacing: "0.5px" }}>SIDEMALIKI</span>
+           </div>
+           <div className="text-muted fw-bold" style={{ fontSize: "0.7rem" }}>
+              <i className="far fa-clock me-1"></i>{currentTime || "..."}
+           </div>
+        </div>
+
+        {/* KANAN: Profil Info */}
+        <div className="d-flex align-items-center gap-3">
+          <div className="text-end d-none d-md-block">
+            <h6 className="m-0 fw-bolder text-dark" style={{ fontSize: "0.95rem" }}>DEMA UIN MALANG</h6>
+            <small className="text-muted fw-500" style={{ fontSize: "0.75rem" }}>Badan Pengurus Harian</small>
+          </div>
+          <div className="rounded-circle bg-dark text-white d-flex align-items-center justify-content-center fw-bold shadow-sm" style={{ width: "40px", height: "40px", border: "2px solid #e2e8f0", fontSize: "0.9rem" }}>BP</div>
         </div>
       </header>
 
@@ -1120,7 +1329,7 @@ export default function DashboardBPH() {
               </div>
             </div>
             
-            <div className="glass-card p-5 mt-2">
+            <div className="glass-card p-4 p-md-5 mt-2">
               <div className="row g-4 align-items-center position-relative" style={{ zIndex: 2 }}>
                 <div className="col-lg-5 border-end border-secondary border-opacity-50 pe-lg-4">
                   <div className="d-flex align-items-center mb-3">
@@ -1160,7 +1369,7 @@ export default function DashboardBPH() {
               <div className="col-md-6">
                 <div className="card border-0 shadow-sm rounded-4 p-4 h-100 bg-white hover-elevate cursor-pointer" onClick={() => setDashboardModalContent("proker")}>
                   <div className="d-flex align-items-start">
-                    <div className="bg-slate-100 text-slate-600 rounded-4 p-3 me-4 border bg-light"><i className="fas fa-calendar-check fa-2x text-secondary"></i></div>
+                    <div className="bg-slate-100 text-slate-600 rounded-4 p-3 me-3 border bg-light"><i className="fas fa-calendar-check fa-2x text-secondary"></i></div>
                     <div>
                       <h6 className="fw-bold text-dark mb-2">Fokus Program Kerja</h6>
                       <p className="text-muted small mb-0 lh-lg">{webProker || "Belum ada agenda spesifik bulan ini."}</p>
@@ -1171,7 +1380,7 @@ export default function DashboardBPH() {
               <div className="col-md-6">
                 <div className="card border-0 shadow-sm rounded-4 p-4 h-100 bg-white hover-elevate cursor-pointer" onClick={() => setDashboardModalContent("pengurus")}>
                   <div className="d-flex align-items-start">
-                    <div className="bg-slate-100 text-slate-600 rounded-4 p-3 me-4 border bg-light"><i className="fas fa-sitemap fa-2x text-secondary"></i></div>
+                    <div className="bg-slate-100 text-slate-600 rounded-4 p-3 me-3 border bg-light"><i className="fas fa-sitemap fa-2x text-secondary"></i></div>
                     <div>
                       <h6 className="fw-bold text-dark mb-2">Total Pengurus Aktif</h6>
                       <p className="text-muted small mb-0 lh-lg">Terdapat <span className="badge bg-dark text-white mx-1">{dataPengurus.length}</span> fungsionaris yang tercatat dalam sistem saat ini.</p>
@@ -1188,22 +1397,22 @@ export default function DashboardBPH() {
         {activeMenu === "admin_surat" && (
           <div className="animate-fade-in-up">
             <h4 className="fw-bolder mb-4 text-dark">Surat Induk BPH</h4>
-            <ul className="nav nav-pills mb-4 gap-2 bg-white p-2 rounded-pill shadow-sm d-inline-flex border">
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabSurat === "masuk" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("masuk")}>Surat Masuk</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabSurat === "keluar" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("keluar")}>Surat Keluar / SK</button></li>
+            <ul className="nav nav-pills mb-4 bg-white p-2 rounded-4 shadow-sm d-inline-flex border scroll-menu-mobile">
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabSurat === "masuk" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("masuk")}>Surat Masuk</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabSurat === "keluar" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabSurat("keluar")}>Surat Keluar / SK</button></li>
             </ul>
 
             {adminSubTabSurat === "masuk" && (
-              <div className="card border-0 shadow-sm rounded-4 p-4">
-                <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 pb-2 border-bottom gap-2">
+              <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4">
+                <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 pb-2 border-bottom gap-3">
                   <span className="fw-bold text-dark fs-5">Data Surat Masuk BPH</span>
-                  <div className="d-flex gap-2">
-                    <input type="text" className="form-control form-control-sm rounded-pill px-3" style={{width: "200px"}} placeholder="🔍 Cari Perihal..." value={searchMasuk} onChange={(e) => setSearchMasuk(e.target.value)} />
+                  <div className="d-flex flex-wrap gap-2">
+                    <input type="text" className="form-control form-control-sm rounded-pill px-3" style={{width: "180px"}} placeholder="🔍 Cari Perihal..." value={searchMasuk} onChange={(e) => setSearchMasuk(e.target.value)} />
                     <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => exportToExcel(sortedMasuk, "Surat_Masuk_BPH", "Masuk")}><i className="fas fa-file-excel me-1"></i> Excel</button>
                     
                     <input type="file" className="d-none" id="ai-scan-masuk" accept=".pdf" onChange={(e) => handleAIScanSurat(e, "Masuk")} />
                     <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById('ai-scan-masuk')?.click()} disabled={isAiLoading}>
-                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan OCR</>}
+                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan</>}
                     </button>
                     
                     <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataSurat(null); setTipeSurat("Masuk"); setIsModalSuratOpen(true); }}><i className="fas fa-plus me-1"></i> Tambah</button>
@@ -1237,16 +1446,16 @@ export default function DashboardBPH() {
             )}
 
             {adminSubTabSurat === "keluar" && (
-              <div className="card border-0 shadow-sm rounded-4 p-4">
-                <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 pb-2 border-bottom gap-2">
+              <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4">
+                <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 pb-2 border-bottom gap-3">
                   <span className="fw-bold text-dark fs-5">Data Surat Keluar / SK</span>
-                  <div className="d-flex gap-2">
-                    <input type="text" className="form-control form-control-sm rounded-pill px-3" style={{width: "200px"}} placeholder="🔍 Cari Perihal..." value={searchKeluar} onChange={(e) => setSearchKeluar(e.target.value)} />
+                  <div className="d-flex flex-wrap gap-2">
+                    <input type="text" className="form-control form-control-sm rounded-pill px-3" style={{width: "180px"}} placeholder="🔍 Cari Perihal..." value={searchKeluar} onChange={(e) => setSearchKeluar(e.target.value)} />
                     <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => exportToExcel(sortedKeluar, "Surat_Keluar_BPH", "Keluar")}><i className="fas fa-file-excel me-1"></i> Excel</button>
                     
                     <input type="file" className="d-none" id="ai-scan-keluar" accept=".pdf" onChange={(e) => handleAIScanSurat(e, "Keluar")} />
                     <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById('ai-scan-keluar')?.click()} disabled={isAiLoading}>
-                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan OCR</>}
+                      {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan</>}
                     </button>
 
                     <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataSurat(null); setTipeSurat("Keluar"); setIsModalSuratOpen(true); }}><i className="fas fa-plus me-1"></i> Buat</button>
@@ -1285,11 +1494,11 @@ export default function DashboardBPH() {
         {activeMenu === "admin_keuangan" && (
           <div className="animate-fade-in-up">
             <h4 className="fw-bolder mb-4 text-dark">Keuangan Induk BPH</h4>
-            <ul className="nav nav-pills mb-4 gap-2 bg-white p-2 rounded-pill shadow-sm d-inline-flex border flex-wrap">
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabKeu === "dipa" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("dipa")}>Dana DIPA</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabKeu === "intern" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("intern")}>Dana Intern</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabKeu === "extern" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("extern")}>Dana Extern</button></li>
-              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-4 ${adminSubTabKeu === "kepanitiaan" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("kepanitiaan")}>Kepanitiaan</button></li>
+            <ul className="nav nav-pills mb-4 bg-white p-2 rounded-4 shadow-sm d-inline-flex border scroll-menu-mobile">
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabKeu === "dipa" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("dipa")}>Dana DIPA</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabKeu === "intern" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("intern")}>Dana Intern</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabKeu === "extern" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("extern")}>Dana Extern</button></li>
+              <li className="nav-item"><button className={`nav-link rounded-pill fw-bold px-3 px-md-4 text-nowrap ${adminSubTabKeu === "kepanitiaan" ? "active bg-dark text-white" : "bg-transparent text-muted"}`} onClick={() => setAdminSubTabKeu("kepanitiaan")}>Kepanitiaan</button></li>
             </ul>
 
             {/* TAB DIPA / INTERN / EXTERN */}
@@ -1299,10 +1508,10 @@ export default function DashboardBPH() {
               let tempSaldo = 0;
               
               return (
-                <div className="card border-0 shadow-sm rounded-4 p-4 animate-fade-in-up">
-                  <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 pb-2 border-bottom gap-2">
+                <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4 animate-fade-in-up">
+                  <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 pb-2 border-bottom gap-3">
                     <span className="fw-bold text-dark fs-5">Sirkulasi Dana {catLabel}</span>
-                    <div className="d-flex gap-2">
+                    <div className="d-flex flex-wrap gap-2">
                       <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => exportKeuanganToExcel(catLabel)}><i className="fas fa-file-excel me-1"></i> Excel</button>
                       
                       <input type="file" className="d-none" id={`ai-scan-${catLabel}`} accept="image/*,.pdf" onChange={(e) => handleAIScanKeuangan(e, catLabel)} />
@@ -1310,7 +1519,7 @@ export default function DashboardBPH() {
                         {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan Bukti</>}
                       </button>
 
-                      <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataKeu(null); setKategoriKeu(catLabel); setIsModalKeuOpen(true); }}><i className="fas fa-plus me-1"></i> Tambah Transaksi</button>
+                      <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataKeu(null); setKategoriKeu(catLabel); setIsModalKeuOpen(true); }}><i className="fas fa-plus me-1"></i> Input</button>
                     </div>
                   </div>
                   <div className="table-responsive">
@@ -1356,7 +1565,6 @@ export default function DashboardBPH() {
                const kepanitiaanData = bphKeuangan.filter(k => k.cat === "Kepanitiaan");
                const filteredData = kepanitiaanData.filter(k => k.nama_kegiatan === activeKegiatan);
                
-               // Gabungkan kegiatan DB dan Draft tanpa duplikat
                const listUniqKeg = Array.from(new Set([
                  ...daftarKegiatanCustom, 
                  ...kepanitiaanData.filter(k => k.nama_kegiatan).map(k => k.nama_kegiatan)
@@ -1365,25 +1573,25 @@ export default function DashboardBPH() {
                let grandTotal = 0;
 
                return (
-                  <div className="card border-0 shadow-sm rounded-4 p-4 animate-fade-in-up">
-                     <div className="d-flex flex-wrap justify-content-between align-items-center mb-4 pb-2 border-bottom gap-2">
+                  <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4 animate-fade-in-up">
+                     <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 pb-2 border-bottom gap-3">
                         <span className="fw-bold text-dark fs-5">Sirkulasi Keuangan Kegiatan</span>
-                        <div className="d-flex gap-2">
+                        <div className="d-flex flex-wrap gap-2">
                           <button className="btn btn-success btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => exportKeuanganToExcel("Kepanitiaan")} disabled={!activeKegiatan}><i className="fas fa-file-excel me-1"></i> Excel</button>
                           
                           <input type="file" className="d-none" id="ai-scan-kepanitiaan" accept="image/*,.pdf" onChange={(e) => handleAIScanKeuangan(e, "Kepanitiaan")} />
                           <button className="btn btn-primary btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => document.getElementById('ai-scan-kepanitiaan')?.click()} disabled={isAiLoading}>
-                            {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan Nota</>}
+                            {isAiLoading ? <i className="fas fa-spinner fa-spin"></i> : <><i className="fas fa-robot me-1"></i> Scan</>}
                           </button>
 
-                          <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataKeu({nama_kegiatan: activeKegiatan}); setKategoriKeu("Kepanitiaan"); setIsModalKeuOpen(true); }}><i className="fas fa-plus me-1"></i> Input Nota</button>
+                          <button className="btn btn-dark btn-sm rounded-pill fw-bold px-3 shadow-sm text-nowrap" onClick={() => { setEditDataKeu({nama_kegiatan: activeKegiatan}); setKategoriKeu("Kepanitiaan"); setIsModalKeuOpen(true); }}><i className="fas fa-plus me-1"></i> Input</button>
                         </div>
                      </div>
 
-                     <div className="mb-4 d-flex align-items-center bg-light p-3 rounded-3 border flex-wrap gap-3">
-                        <div className="d-flex align-items-center gap-2">
+                     <div className="mb-4 d-flex flex-column flex-md-row align-items-md-center bg-light p-3 rounded-3 border gap-3">
+                        <div className="d-flex flex-column flex-md-row align-items-md-center gap-2 flex-grow-1">
                           <label className="fw-bold text-nowrap m-0">Pilih Kegiatan:</label>
-                          <select className="form-select form-select-sm shadow-sm fw-bold border-secondary text-primary" style={{minWidth: "250px", maxWidth: "350px"}} value={activeKegiatan} onChange={(e) => setActiveKegiatan(e.target.value)}>
+                          <select className="form-select form-select-sm shadow-sm fw-bold border-secondary text-primary" style={{maxWidth: "100%"}} value={activeKegiatan} onChange={(e) => setActiveKegiatan(e.target.value)}>
                              {listUniqKeg.length === 0 ? <option value="">Belum ada kegiatan</option> : null}
                              {listUniqKeg.map((keg, idx) => {
                                 const isDraftOnly = daftarKegiatanCustom.includes(keg as string) && !kepanitiaanData.some(k => k.nama_kegiatan === keg);
@@ -1391,8 +1599,8 @@ export default function DashboardBPH() {
                              })}
                           </select>
                         </div>
-                        <button className="btn btn-sm btn-outline-dark fw-bold rounded-pill px-3 shadow-sm" onClick={handleTambahKegiatan}>
-                           <i className="fas fa-folder-plus me-1"></i> Buat Kegiatan Baru
+                        <button className="btn btn-sm btn-outline-dark fw-bold rounded-pill px-3 shadow-sm text-nowrap" onClick={handleTambahKegiatan}>
+                           <i className="fas fa-folder-plus me-1"></i> Buat Baru
                         </button>
                      </div>
 
@@ -1441,15 +1649,102 @@ export default function DashboardBPH() {
           </div>
         )}
 
+        {/* --- MENU BARU: PRESENSI KEGIATAN --- */}
+        {activeMenu === "presensi" && (
+          <div className="animate-fade-in-up">
+            <h4 className="fw-bolder mb-4 text-dark">Presensi Kehadiran Kegiatan</h4>
+            
+            <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4 bg-white mb-4">
+              <div className="d-flex justify-content-between align-items-center mb-4 border-bottom pb-2">
+                <span className="fw-bold text-dark fs-5">Daftar Link Presensi</span>
+                <button className={`btn rounded-pill fw-bold px-3 shadow-sm ${showAddPresensi ? 'btn-light border' : 'btn-dark'}`} onClick={() => setShowAddPresensi(!showAddPresensi)}>
+                  <i className={`fas ${showAddPresensi ? 'fa-times text-danger' : 'fa-plus text-white'} me-1 me-md-2`}></i> <span className="d-none d-sm-inline">{showAddPresensi ? "Batal" : "Buat Presensi Baru"}</span>
+                </button>
+              </div>
+
+              {showAddPresensi && (
+                <div className="card border border-secondary border-opacity-25 rounded-4 p-4 mb-4 bg-light">
+                  <h6 className="fw-bold mb-3 text-dark"><i className="fas fa-link text-primary me-2"></i>Formulir Pembuatan Link Presensi</h6>
+                  <p className="small text-muted mb-4">Pengurus nantinya akan diminta mengisi Nama, Jabatan, Tanda Tangan, dan Bukti Foto Selfie secara langsung di link yang dibagikan.</p>
+                  
+                  <form onSubmit={handleSavePresensi}>
+                    <div className="row g-3 mb-4">
+                       <div className="col-md-8">
+                          <label className="form-label small fw-bold text-secondary">Nama Kegiatan / Agenda</label>
+                          <input type="text" className="form-control" placeholder="Contoh: Rapat Pleno BPH" value={formPresensi.nama_kegiatan} onChange={(e) => setFormPresensi({...formPresensi, nama_kegiatan: e.target.value})} required />
+                       </div>
+                       <div className="col-md-4">
+                          <label className="form-label small fw-bold text-secondary">Tanggal Pelaksanaan</label>
+                          <input type="date" className="form-control" value={formPresensi.tgl} onChange={(e) => setFormPresensi({...formPresensi, tgl: e.target.value})} required />
+                       </div>
+                    </div>
+                    <button type="submit" className="btn btn-dark fw-bold rounded-pill px-5 w-100 w-md-auto"><i className="fas fa-magic me-2"></i> Generate Link</button>
+                  </form>
+                </div>
+              )}
+
+              <div className="table-responsive">
+                <table className="table table-hover align-middle border-top text-nowrap">
+                  <thead className="table-light">
+                    <tr>
+                      <th className="py-3">No</th>
+                      <th>Nama Kegiatan</th>
+                      <th>Tanggal</th>
+                      <th>Link Absen Publik</th>
+                      <th>Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {daftarPresensi.length === 0 ? (
+                      <tr><td colSpan={5} className="text-center py-5 text-muted">Belum ada link presensi yang dibuat.</td></tr>
+                    ) : (
+                      daftarPresensi.map((p, idx) => (
+                        <tr key={p.id}>
+                          <td className="text-secondary small">{idx + 1}</td>
+                          <td className="fw-bold text-dark">{p.nama_kegiatan}</td>
+                          <td>{p.tgl}</td>
+                          <td>
+                             <span className="badge bg-light text-primary border text-lowercase cursor-pointer hover-elevate px-3 py-2" onClick={() => handleCopyLink(p.id)} title="Klik untuk Copy Link">
+                               <i className="fas fa-copy me-2"></i> sidemaliki.com/presensi/{p.id}
+                             </span>
+                          </td>
+                          <td>
+                             <button className="btn btn-sm btn-dark rounded-pill fw-bold px-3 me-2 shadow-sm" onClick={() => { setSelectedPresensi(p); setShowModalPeserta(true); }}>
+                               <i className="fas fa-eye me-1"></i> Peserta
+                             </button>
+                             <button className="btn btn-sm btn-outline-danger rounded-circle" title="Hapus Form Absen" onClick={() => handleDeletePresensi(p.id)}>
+                               <i className="fas fa-trash"></i>
+                             </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            
+            <div className="alert alert-primary border-0 bg-primary bg-opacity-10 d-flex align-items-start rounded-4 p-3 p-md-4 shadow-sm">
+               <i className="fas fa-info-circle fa-2x me-3 text-primary mt-1 d-none d-sm-block"></i>
+               <div>
+                  <h6 className="fw-bold text-primary mb-1">Informasi Fitur Presensi</h6>
+                  <p className="small text-dark opacity-75 mb-0 lh-base">
+                     Halaman presensi publik tidak berada di dalam dashboard ini. Setelah membuat presensi, bagikan link kepada peserta. Saat peserta membuka link tersebut (contoh: <code>/presensi/ABCDE</code>), mereka akan melihat formulir yang mewajibkan pengisian nama, jabatan, tanda tangan digital (kanvas layar sentuh), serta bukti foto kehadiran yang diambil langsung dari kamera *smartphone* secara *real-time*.
+                  </p>
+               </div>
+            </div>
+          </div>
+        )}
+
         {/* --- MENU: SUSUNAN KEPENGURUSAN --- */}
         {activeMenu === "kepengurusan" && (
           <div className="animate-fade-in-up">
-            <div className="d-flex justify-content-between align-items-end mb-4">
+            <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-end mb-4 gap-3">
               <div>
                 <h4 className="fw-bolder m-0 text-dark">Struktur Organisasi</h4>
                 <p className="text-muted small m-0 mt-1">Daftar pengurus disinkronisasi via Excel di Pengaturan Web.</p>
               </div>
-              <span className="badge bg-dark text-white border p-2 shadow-sm"><i className="fas fa-sitemap me-2"></i> {dataPengurus.length} Pengurus</span>
+              <span className="badge bg-dark text-white border p-2 shadow-sm w-auto align-self-start align-self-sm-auto"><i className="fas fa-sitemap me-2"></i> {dataPengurus.length} Pengurus</span>
             </div>
 
             {dataPengurus.length === 0 ? (
@@ -1468,7 +1763,7 @@ export default function DashboardBPH() {
                   <div className="card-body bg-white p-4">
                     <div className="row g-3">
                       {members.map((m, idx) => (
-                        <div className="col-md-6 col-lg-4" key={idx}>
+                        <div className="col-12 col-md-6 col-lg-4" key={idx}>
                           <div className="card shadow-sm border-0 border-start border-4 border-dark h-100 bg-light hover-elevate">
                             <div className="card-body py-3 px-4">
                               <div className="fw-bolder fs-6 text-dark text-truncate" title={m.nama}>{m.nama}</div>
@@ -1491,32 +1786,40 @@ export default function DashboardBPH() {
           <div className="animate-fade-in-up">
             <h4 className="fw-bolder mb-4 text-dark">Program Kerja Organisasi</h4>
             
-            <ul className="nav nav-tabs modul-tabs mb-4 border-bottom border-2">
-              <li className="nav-item"><a className={`nav-link text-uppercase fw-bold ${prokerTab === "umum" ? "active text-dark border-dark" : ""}`} onClick={() => setProkerTab("umum")}>Gambaran Umum</a></li>
-              <li className="nav-item"><a className={`nav-link text-uppercase fw-bold ${prokerTab === "kalender" ? "active text-dark border-dark" : ""}`} onClick={() => setProkerTab("kalender")}>Kalender Kegiatan</a></li>
+            <ul className="nav nav-tabs modul-tabs mb-4 border-bottom border-2 scroll-menu-mobile">
+              <li className="nav-item"><a className={`nav-link text-uppercase text-nowrap fw-bold ${prokerTab === "umum" ? "active text-dark border-dark" : ""}`} onClick={() => setProkerTab("umum")}>Gambaran Umum</a></li>
+              <li className="nav-item"><a className={`nav-link text-uppercase text-nowrap fw-bold ${prokerTab === "kalender" ? "active text-dark border-dark" : ""}`} onClick={() => setProkerTab("kalender")}>Kalender Kegiatan</a></li>
             </ul>
 
             {prokerTab === "umum" && (
-              <div className="card border-0 shadow-sm rounded-4 p-4 bg-white animate-fade-in-up">
+              <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4 bg-white animate-fade-in-up">
                 <div className="d-flex justify-content-between align-items-center mb-4 border-bottom pb-2">
                   <span className="fw-bold text-dark fs-5">Daftar Program Kerja BPH</span>
-                  <button className={`btn rounded-pill fw-bold px-4 shadow-sm ${showAddProker ? 'btn-light border' : 'btn-dark'}`} onClick={() => setShowAddProker(!showAddProker)}>
-                    <i className={`fas ${showAddProker ? 'fa-times text-danger' : 'fa-plus text-white'} me-2`}></i> {showAddProker ? "Batal" : "Tambah Proker"}
+                  <button className={`btn rounded-pill fw-bold px-3 px-md-4 shadow-sm ${showAddProker ? 'btn-light border' : 'btn-dark'}`} onClick={() => { setShowAddProker(!showAddProker); setEditProkerId(null); setFormProker({ nama: "", tujuan: "", sasaran: "", kpi: "", pj: "", anggaran: "", waktu_pelaksanaan: "", scope: "bph" }); }}>
+                    <i className={`fas ${showAddProker ? 'fa-times text-danger' : 'fa-plus text-white'} me-1 me-md-2`}></i> <span className="d-none d-sm-inline">{showAddProker ? "Batal" : "Tambah Proker"}</span>
                   </button>
                 </div>
 
                 {showAddProker && (
                   <div className="card border border-secondary border-opacity-25 rounded-4 p-4 mb-4 bg-light">
-                    <h6 className="fw-bold mb-3 text-dark"><i className="fas fa-edit text-primary me-2"></i>Formulir Program Kerja Baru</h6>
+                    <h6 className="fw-bold mb-3 text-dark"><i className="fas fa-edit text-primary me-2"></i>{editProkerId ? "Edit" : "Formulir"} Program Kerja</h6>
                     <form onSubmit={handleSaveProker}>
-                      <div className="mb-3">
-                        <label className="form-label small fw-bold text-secondary">Nama Program Kerja</label>
-                        <input type="text" className="form-control" placeholder="Contoh: Latihan Kepemimpinan Manajemen Mahasiswa" value={formProker.nama} onChange={(e) => setFormProker({...formProker, nama: e.target.value})} required />
+                      <div className="row g-3 mb-3">
+                         <div className="col-md-6">
+                            <label className="form-label small fw-bold text-secondary">Nama Program Kerja</label>
+                            <input type="text" className="form-control" placeholder="Contoh: Latihan Kepemimpinan Manajemen Mahasiswa" value={formProker.nama} onChange={(e) => setFormProker({...formProker, nama: e.target.value})} required />
+                         </div>
+                         <div className="col-md-6">
+                            <label className="form-label small fw-bold text-secondary">Penanggung Jawab (PJ)</label>
+                            <input type="text" className="form-control" placeholder="Contoh: Kementerian Dalam Negeri" value={formProker.pj} onChange={(e) => setFormProker({...formProker, pj: e.target.value})} required />
+                         </div>
                       </div>
+                      
                       <div className="mb-3">
                         <label className="form-label small fw-bold text-secondary">Tujuan / Goal</label>
                         <textarea className="form-control" rows={2} placeholder="Tujuan dilaksanakannya proker ini..." value={formProker.tujuan} onChange={(e) => setFormProker({...formProker, tujuan: e.target.value})} required></textarea>
                       </div>
+
                       <div className="row g-3 mb-4">
                         <div className="col-md-6">
                           <label className="form-label small fw-bold text-secondary">Sasaran Peserta / Target</label>
@@ -1527,30 +1830,70 @@ export default function DashboardBPH() {
                           <input type="text" className="form-control" placeholder="Contoh: Diikuti oleh minimal 150 peserta" value={formProker.kpi} onChange={(e) => setFormProker({...formProker, kpi: e.target.value})} required />
                         </div>
                       </div>
-                      <button type="submit" className="btn btn-dark fw-bold rounded-pill px-5"><i className="fas fa-save me-2"></i> Simpan Program Kerja</button>
+
+                      <div className="row g-3 mb-4">
+                         <div className="col-md-6">
+                            <label className="form-label small fw-bold text-secondary">Waktu/Tanggal Pelaksanaan</label>
+                            <input type="text" className="form-control" placeholder="Contoh: 15-17 Agustus 2026" value={formProker.waktu_pelaksanaan} onChange={(e) => setFormProker({...formProker, waktu_pelaksanaan: e.target.value})} required />
+                         </div>
+                         <div className="col-md-6">
+                            <label className="form-label small fw-bold text-secondary">Estimasi Anggaran (Rp)</label>
+                            <input type="text" className="form-control" placeholder="Contoh: Rp 15.000.000" value={formProker.anggaran} onChange={(e) => setFormProker({...formProker, anggaran: e.target.value})} required />
+                         </div>
+                      </div>
+
+                      <button type="submit" className="btn btn-dark fw-bold rounded-pill px-5 w-100 w-md-auto"><i className="fas fa-save me-2"></i> Simpan Program Kerja</button>
                     </form>
                   </div>
                 )}
 
-                <div className="table-responsive mt-3">
-                  <table className="table table-hover align-middle border-top text-nowrap">
-                    <thead className="table-light"><tr><th className="py-3">Tgl Input</th><th>Nama Program Kerja</th><th>Tujuan</th><th>Sasaran</th><th>KPI Target</th><th>Aksi</th></tr></thead>
-                    <tbody>
-                      {daftarProker.length === 0 ? <tr><td colSpan={6} className="text-center py-5 text-muted">Belum ada program kerja yang ditambahkan.</td></tr> : 
-                        daftarProker.map((p) => (
-                          <tr key={p.id}>
-                            <td className="text-secondary small">{p.tgl}</td>
-                            <td className="fw-bold text-dark">{p.nama}</td>
-                            <td className="text-truncate" style={{ maxWidth: "200px" }} title={p.tujuan}>{p.tujuan}</td>
-                            <td><span className="badge bg-light border text-dark">{p.sasaran}</span></td>
-                            <td className="text-success fw-500">{p.kpi}</td>
-                            <td><button className="btn btn-sm btn-outline-danger rounded-circle" onClick={() => handleDeleteProker(p.id)}><i className="fas fa-trash"></i></button></td>
-                          </tr>
-                        ))
-                      }
-                    </tbody>
-                  </table>
-                </div>
+                {Object.keys(groupedProkers).length === 0 ? (
+                  <p className="text-center py-5 text-muted">Belum ada program kerja yang ditambahkan di organisasi.</p>
+                ) : (
+                  Object.entries(groupedProkers).map(([kementerian, prokers]) => (
+                    <div key={kementerian} className="mb-5">
+                       <h6 className="fw-bold text-dark mb-3 p-2 bg-light border-start border-4 border-primary shadow-sm rounded-end">
+                         <i className="fas fa-layer-group me-2 text-primary"></i>
+                         {kementerian}
+                       </h6>
+                       <div className="table-responsive">
+                         <table className="table table-bordered table-hover align-middle text-nowrap">
+                           <thead className="table-light text-center">
+                             <tr>
+                               <th className="py-3">No</th>
+                               <th>Nama Program Kerja</th>
+                               <th>Indikator (KPI)</th>
+                               <th>Tujuan</th>
+                               <th>Sasaran</th>
+                               <th>Penanggung Jawab</th>
+                               <th>Waktu Pelaksanaan</th>
+                               <th>Anggaran</th>
+                               <th>Aksi</th>
+                             </tr>
+                           </thead>
+                           <tbody>
+                             {prokers.map((p, i) => (
+                               <tr key={p.id}>
+                                 <td className="text-center text-secondary">{i+1}</td>
+                                 <td className="fw-bold text-dark">{p.nama}</td>
+                                 <td className="text-success fw-500">{p.kpi}</td>
+                                 <td className="text-wrap" style={{ minWidth: "200px" }}>{p.tujuan}</td>
+                                 <td><span className="badge bg-light border text-dark">{p.sasaran}</span></td>
+                                 <td className="text-secondary">{p.pj || "-"}</td>
+                                 <td className="text-secondary">{p.waktu_pelaksanaan || "-"}</td>
+                                 <td className="fw-bold">{p.anggaran || "-"}</td>
+                                 <td className="text-center">
+                                    <button className="btn btn-sm btn-outline-primary rounded-circle me-1" title="Edit" onClick={() => handleEditProker(p)}><i className="fas fa-edit"></i></button>
+                                    <button className="btn btn-sm btn-outline-danger rounded-circle" onClick={() => handleDeleteProker(p.id)}><i className="fas fa-trash"></i></button>
+                                 </td>
+                               </tr>
+                             ))}
+                           </tbody>
+                         </table>
+                       </div>
+                    </div>
+                  ))
+                )}
               </div>
             )}
 
@@ -1595,12 +1938,12 @@ export default function DashboardBPH() {
                     <div className="col-md-6"><label className="form-label small fw-bold text-secondary">Email Login</label><input type="email" className="form-control bg-light" placeholder="kemendagri@sidemaliki.com" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} required /></div>
                     <div className="col-md-6"><label className="form-label small fw-bold text-secondary">Password Login</label><input type="text" className="form-control bg-light" placeholder="Minimal 6 karakter" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={6} /></div>
                   </div>
-                  <button type="submit" className="btn btn-dark fw-bold rounded-pill px-4" disabled={isSubmitting}><i className="fas fa-save me-2"></i> {isSubmitting ? "Menyimpan..." : "Simpan Akun"}</button>
+                  <button type="submit" className="btn btn-dark fw-bold rounded-pill px-4 w-100 w-md-auto" disabled={isSubmitting}><i className="fas fa-save me-2"></i> {isSubmitting ? "Menyimpan..." : "Simpan Akun"}</button>
                 </form>
               </div>
             )}
 
-            <div className="card border-0 shadow-sm rounded-4 p-4 bg-white">
+            <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4 bg-white">
               <h6 className="fw-bold mb-4 text-dark fs-5 border-bottom pb-2">Daftar Akun & Hak Akses</h6>
               <div className="table-responsive">
                 <table className="table table-hover align-middle border-top text-nowrap">
@@ -1632,15 +1975,15 @@ export default function DashboardBPH() {
           <div className="animate-fade-in-up">
             <button className="btn btn-light border shadow-sm mb-4 text-dark fw-bold rounded-pill px-3" onClick={() => setActiveMenu("kementerian")}><i className="fas fa-arrow-left me-2"></i> Kembali</button>
             <div className="card border-0 shadow-sm rounded-4 p-4 mb-4 glass-card">
-              <div className="d-flex justify-content-between align-items-center position-relative" style={{ zIndex: 2 }}>
+              <div className="d-flex flex-column flex-md-row justify-content-between align-items-md-center position-relative gap-3" style={{ zIndex: 2 }}>
                 <div><h4 className="fw-bolder mb-1 text-white">{selectedKem.nama}</h4><p className="m-0 text-white opacity-75 small"><i className="fas fa-envelope me-2"></i>{selectedKem.email}</p></div>
-                <div className="text-end"><span className="badge bg-white text-dark px-3 py-2 shadow-sm border border-secondary rounded-pill"><i className="fas fa-search me-1"></i> Mode Pantau</span></div>
+                <div className="text-start text-md-end"><span className="badge bg-white text-dark px-3 py-2 shadow-sm border border-secondary rounded-pill"><i className="fas fa-search me-1"></i> Mode Pantau</span></div>
               </div>
             </div>
 
-            <ul className="nav nav-tabs modul-tabs mb-4 border-bottom border-2">
-              <li className="nav-item"><a className={`nav-link text-uppercase fw-bold ${detailTab === "surat" ? "active text-dark border-dark" : ""}`} onClick={() => setDetailTab("surat")}>Arsip Surat</a></li>
-              <li className="nav-item"><a className={`nav-link text-uppercase fw-bold ${detailTab === "keuangan" ? "active text-dark border-dark" : ""}`} onClick={() => setDetailTab("keuangan")}>Laporan Keuangan</a></li>
+            <ul className="nav nav-tabs modul-tabs mb-4 border-bottom border-2 scroll-menu-mobile">
+              <li className="nav-item"><a className={`nav-link text-uppercase text-nowrap fw-bold ${detailTab === "surat" ? "active text-dark border-dark" : ""}`} onClick={() => setDetailTab("surat")}>Arsip Surat</a></li>
+              <li className="nav-item"><a className={`nav-link text-uppercase text-nowrap fw-bold ${detailTab === "keuangan" ? "active text-dark border-dark" : ""}`} onClick={() => setDetailTab("keuangan")}>Laporan Keuangan</a></li>
             </ul>
 
             {detailTab === "surat" && (
@@ -1706,24 +2049,24 @@ export default function DashboardBPH() {
         {/* --- MENU: ASISTEN AI (TERMASUK PDF & SMARTLETTER LOGIC SUNGGUHAN) --- */}
         {activeMenu === "asisten_ai" && (
           <div className="animate-fade-in-up">
-            <div className="d-flex align-items-center mb-4 pb-2 border-bottom">
-              <div className="bg-dark text-white rounded-3 p-3 me-3 shadow-sm"><i className="fas fa-robot fa-2x"></i></div>
+            <div className="d-flex flex-column flex-md-row align-items-md-center mb-4 pb-2 border-bottom gap-3">
+              <div className="bg-dark text-white rounded-3 p-3 shadow-sm align-self-start align-self-md-center"><i className="fas fa-robot fa-2x"></i></div>
               <div>
                 <h3 className="fw-bolder m-0 text-dark">Asisten AI SIDEMALIKI</h3>
                 <p className="text-muted m-0 mt-1">Kumpulan alat cerdas otomatis untuk mempercepat administrasi sekretaris.</p>
               </div>
             </div>
 
-            <div className="d-flex flex-wrap ai-tabs mb-4 gap-2">
-              <a className={`nav-link ${aiTab === "smartletter" ? "active" : ""}`} onClick={() => setAiTab("smartletter")}><i className="fas fa-search me-2"></i>Cek Surat PPTA</a>
-              <a className={`nav-link ${aiTab === "notulen" ? "active" : ""}`} onClick={() => setAiTab("notulen")}><i className="fas fa-pen-fancy me-2"></i>Notulen AI</a>
-              <a className={`nav-link ${aiTab === "ttd" ? "active" : ""}`} onClick={() => setAiTab("ttd")}><i className="fas fa-signature me-2"></i>Sign & Stamp Pro</a>
-              <a className={`nav-link ${aiTab === "pdf" ? "active" : ""}`} onClick={() => setAiTab("pdf")}><i className="fas fa-file-pdf me-2"></i>PDF Splitter</a>
+            <div className="d-flex flex-wrap ai-tabs mb-4 gap-2 scroll-menu-mobile">
+              <a className={`nav-link text-nowrap ${aiTab === "smartletter" ? "active" : ""}`} onClick={() => setAiTab("smartletter")}><i className="fas fa-search me-2"></i>Cek Surat PPTA</a>
+              <a className={`nav-link text-nowrap ${aiTab === "notulen" ? "active" : ""}`} onClick={() => setAiTab("notulen")}><i className="fas fa-pen-fancy me-2"></i>Notulen AI</a>
+              <a className={`nav-link text-nowrap ${aiTab === "ttd" ? "active" : ""}`} onClick={() => setAiTab("ttd")}><i className="fas fa-signature me-2"></i>Sign & Stamp Pro</a>
+              <a className={`nav-link text-nowrap ${aiTab === "pdf" ? "active" : ""}`} onClick={() => setAiTab("pdf")}><i className="fas fa-file-pdf me-2"></i>PDF Splitter</a>
             </div>
 
             {/* TAB SMARTLETTER (EKSTRAKSI TEKS SUNGGUHAN) */}
             {aiTab === "smartletter" && (
-              <div className="card border-0 shadow-sm rounded-4 p-5 bg-white animate-fade-in-up">
+              <div className="card border-0 shadow-sm rounded-4 p-3 p-md-5 bg-white animate-fade-in-up">
                 <div className="text-center mb-4">
                   <h4 className="fw-bolder mb-2 text-dark">Analisis Surat Otomatis</h4>
                   <p className="text-secondary mb-4">Sistem AI memeriksa format teks secara langsung dari file PDF yang Anda unggah.</p>
@@ -1762,7 +2105,7 @@ export default function DashboardBPH() {
 
             {/* TAB NOTULEN */}
             {aiTab === "notulen" && (
-              <div className="card border-0 shadow-sm rounded-4 p-5 bg-white animate-fade-in-up">
+              <div className="card border-0 shadow-sm rounded-4 p-3 p-md-5 bg-white animate-fade-in-up">
                 <div className="text-center mb-5">
                   <h4 className="fw-bolder mb-2 text-dark">NotulenAI</h4>
                   <p className="text-secondary">Ubah catatan kasar rapat atau foto transkrip menjadi notulensi profesional standar formal.</p>
@@ -1832,10 +2175,10 @@ export default function DashboardBPH() {
                     </div>
                   </div>
                   
-                  <div className="col-lg-9 p-4 bg-slate-50 d-flex flex-column align-items-center" style={{ overflowX: "auto" }}>
-                    <div className="d-flex justify-content-between align-items-center w-100 mb-3" style={{ maxWidth: "700px" }}>
+                  <div className="col-lg-9 p-3 p-md-4 bg-slate-50 d-flex flex-column align-items-center" style={{ overflowX: "auto" }}>
+                    <div className="d-flex flex-column flex-sm-row justify-content-between align-items-sm-center w-100 mb-3 gap-3" style={{ maxWidth: "700px" }}>
                        <span className="fw-bold text-dark"><i className="fas fa-desktop me-2"></i>Kanvas Interaktif</span>
-                       <button className="btn btn-dark rounded-pill px-4 shadow-sm" onClick={handleSignAndStamp} disabled={!pdfMasterTtd || isAiLoading}>
+                       <button className="btn btn-dark rounded-pill px-4 shadow-sm w-100 w-sm-auto" onClick={handleSignAndStamp} disabled={!pdfMasterTtd || isAiLoading}>
                           {isAiLoading ? <><i className="fas fa-spinner fa-spin me-2"></i> Menyimpan...</> : <><i className="fas fa-download me-2"></i> Simpan Dokumen</>}
                        </button>
                     </div>
@@ -1844,8 +2187,8 @@ export default function DashboardBPH() {
                     {!pdfPreviewUrl ? (
                       <div className="pdf-preview-container d-flex flex-column align-items-center justify-content-center text-muted" style={{ height: "500px", borderStyle: "dashed", backgroundColor: "white" }}>
                         <i className="fas fa-file-pdf fa-4x mb-3 opacity-25"></i>
-                        <p className="fw-bold">Upload Dokumen Master di Panel Kiri</p>
-                        <p className="small">Dokumen akan muncul di sini sebagai Kanvas Visual.</p>
+                        <p className="fw-bold text-center px-3">Upload Dokumen Master di Panel Kiri</p>
+                        <p className="small text-center px-3">Dokumen akan muncul di sini sebagai Kanvas Visual.</p>
                       </div>
                     ) : (
                       <div className="pdf-preview-container" ref={previewRef}>
@@ -1899,7 +2242,7 @@ export default function DashboardBPH() {
 
             {/* TAB PDF SPLITTER PRO */}
             {aiTab === "pdf" && (
-              <div className="card border-0 shadow-sm rounded-4 p-5 bg-white animate-fade-in-up">
+              <div className="card border-0 shadow-sm rounded-4 p-3 p-md-5 bg-white animate-fade-in-up">
                 <div className="text-center mb-5">
                   <h4 className="fw-bolder mb-2 text-dark">PDF Splitter Pro</h4>
                   <p className="text-secondary">Pisahkan file PDF multi-halaman (seperti e-sertifikat) menjadi file satuan yang dinamai otomatis sesuai daftar nama.</p>
@@ -1963,7 +2306,7 @@ export default function DashboardBPH() {
               <div className="col-lg-8">
                 
                 {/* KARTU PENGATURAN PROFIL */}
-                <div className="card border-0 shadow-sm rounded-4 p-4 mb-4 bg-white">
+                <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4 mb-4 bg-white">
                   <h6 className="fw-bold mb-4 text-dark fs-5 border-bottom pb-2"><i className="fas fa-edit text-secondary me-2"></i>Profil Organisasi Publik</h6>
                   <form onSubmit={handleSaveWebSettings}>
                     <div className="mb-4">
@@ -1987,13 +2330,13 @@ export default function DashboardBPH() {
                     
                     <hr className="my-5 bg-secondary opacity-25" />
 
-                    <div className="mb-4 p-4 rounded-4 border bg-light shadow-sm">
+                    <div className="mb-4 p-3 p-md-4 rounded-4 border bg-light shadow-sm">
                       <h6 className="fw-bold text-dark mb-2"><i className="fas fa-file-pdf me-2 text-danger"></i>Dokumen Pedoman (PO-PPTA)</h6>
                       <p className="small text-muted mb-3">Upload file PDF Pedoman Organisasi yang menjadi Master Acuan bagi AI dalam mengecek kesalahan format surat.</p>
                       
-                      <div className="d-flex align-items-center gap-3">
+                      <div className="d-flex flex-column flex-sm-row align-items-sm-center gap-3">
                         <input type="file" className="form-control d-none" id="upload-po-ppta" accept=".pdf" onChange={handlePoPptaUpload} />
-                        <button type="button" className="btn btn-dark fw-bold rounded-pill shadow-sm" onClick={() => document.getElementById('upload-po-ppta')?.click()} disabled={isUploadingPdf}>
+                        <button type="button" className="btn btn-dark fw-bold rounded-pill shadow-sm text-nowrap" onClick={() => document.getElementById('upload-po-ppta')?.click()} disabled={isUploadingPdf}>
                           {isUploadingPdf ? <i className="fas fa-spinner fa-spin me-2"></i> : <i className="fas fa-upload me-2"></i>}
                           {isUploadingPdf ? "Menyimpan ke Cloud..." : "Pilih File PDF"}
                         </button>
@@ -2008,7 +2351,7 @@ export default function DashboardBPH() {
                       )}
                     </div>
 
-                    <div className="mb-5 p-4 rounded-4 border bg-light shadow-sm">
+                    <div className="mb-5 p-3 p-md-4 rounded-4 border bg-light shadow-sm">
                       <h6 className="fw-bold text-dark mb-2"><i className="fas fa-calendar-alt me-2 text-primary"></i>Integrasi Kalender (Google Calendar)</h6>
                       <p className="small text-muted mb-3">Masukkan link iframe/embed (bagian <code className="bg-white px-1 border rounded">src="..."</code>) dari Pengaturan Google Calendar organisasi.</p>
                       <input type="url" className="form-control bg-white py-2" placeholder="https://calendar.google.com/calendar/embed?src=..." value={linkGCal} onChange={(e) => setLinkGCal(e.target.value)} />
@@ -2021,11 +2364,11 @@ export default function DashboardBPH() {
                 </div>
 
                 {/* KARTU UPLOAD EXCEL KEPENGURUSAN */}
-                <div className="card border-0 shadow-sm rounded-4 p-4 mb-4 bg-white border-top border-4 border-info">
+                <div className="card border-0 shadow-sm rounded-4 p-3 p-md-4 mb-4 bg-white border-top border-4 border-info">
                   <h6 className="fw-bold mb-4 text-dark fs-5 border-bottom pb-2"><i className="fas fa-users-cog text-secondary me-2"></i>Sinkronisasi Database Kepengurusan</h6>
                   <p className="small text-muted mb-4">Sistem akan otomatis membuat bagan struktur berdasarkan data Excel. Urutan kolom wajib: <b>Nama, NIM, Jabatan, Kementerian/Lembaga</b>.</p>
                   
-                  <div className="upload-area mb-4 p-5 bg-light border-secondary shadow-sm">
+                  <div className="upload-area mb-4 p-4 p-md-5 bg-light border-secondary shadow-sm">
                     <i className="fas fa-file-excel fa-3x text-success mb-3 opacity-75"></i>
                     <h6 className="fw-bold text-dark mb-1">{excelFileName || "Upload Master Excel (.xlsx)"}</h6>
                     <p className="small text-muted mb-0">Drag and drop file atau klik tombol di bawah</p>
@@ -2035,12 +2378,12 @@ export default function DashboardBPH() {
                     </button>
                   </div>
 
-                  <div className="d-flex justify-content-between align-items-center bg-slate-50 p-3 rounded-3 border">
+                  <div className="d-flex flex-column flex-sm-row justify-content-between align-items-center bg-slate-50 p-3 rounded-3 border gap-3">
                     <span className="small text-dark fw-bold">
                       <i className="fas fa-info-circle text-primary me-2"></i> 
                       {dataPengurus.length > 0 ? `${dataPengurus.length} Baris Data Terbaca` : "Belum Ada Data Baru"}
                     </span>
-                    <button className="btn btn-dark fw-bold px-4 rounded-pill shadow-sm" onClick={handleSaveWebSettings} disabled={isSavingWeb || dataPengurus.length === 0}>
+                    <button className="btn btn-dark fw-bold px-4 rounded-pill shadow-sm w-100 w-sm-auto" onClick={handleSaveWebSettings} disabled={isSavingWeb || dataPengurus.length === 0}>
                       <i className="fas fa-sync-alt me-2"></i> Sinkronisasi
                     </button>
                   </div>
