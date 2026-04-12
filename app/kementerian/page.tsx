@@ -7,7 +7,6 @@ import { collection, query, where, onSnapshot, doc } from "firebase/firestore";
 
 // IMPORT KOMPONEN MODAL
 import ModalTambahKeuangan from "@/components/ModalTambahKeuangan";
-import ModalTambahInventaris from "@/components/ModalTambahInventaris";
 import ModalTambahSurat from "@/components/ModalTambahSurat";
 
 export default function DashboardKementerian() {
@@ -28,7 +27,6 @@ export default function DashboardKementerian() {
   const [suratMasuk, setSuratMasuk] = useState<any[]>([]);
   const [suratKeluar, setSuratKeluar] = useState<any[]>([]);
   const [keuangan, setKeuangan] = useState<any[]>([]);
-  const [inventaris, setInventaris] = useState<any[]>([]);
 
   // STATE KONTROL MODAL
   const [isModalKeuOpen, setIsModalKeuOpen] = useState(false);
@@ -82,9 +80,6 @@ export default function DashboardKementerian() {
     const unsubKeu = onSnapshot(query(collection(db, "keuangan"), where("scope", "==", currentUserScope)), (snapshot) => {
       setKeuangan(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a:any, b:any) => new Date(a.tgl).getTime() - new Date(b.tgl).getTime()));
     });
-    const unsubInv = onSnapshot(query(collection(db, "inventaris"), where("scope", "==", currentUserScope)), (snapshot) => {
-      setInventaris(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
 
     const unsubWeb = onSnapshot(doc(db, "pengaturan", "beranda"), (docSnap) => {
       if (docSnap.exists()) {
@@ -99,7 +94,7 @@ export default function DashboardKementerian() {
       }
     });
 
-    return () => { clearInterval(timer); unsubSM(); unsubSK(); unsubKeu(); unsubInv(); unsubWeb(); };
+    return () => { clearInterval(timer); unsubSM(); unsubSK(); unsubKeu(); unsubWeb(); };
   }, [currentUserScope]);
 
   const handleLogout = () => {
@@ -224,7 +219,6 @@ export default function DashboardKementerian() {
           <li className="sidebar-heading">Data Administrasi</li>
           <li><a className={`nav-link ${activeSidebar === "surat" ? "active" : ""}`} onClick={() => setActiveSidebar("surat")}><i className="fas fa-envelope"></i> <span>Persuratan</span></a></li>
           <li><a className={`nav-link ${activeSidebar === "keuangan" ? "active" : ""}`} onClick={() => setActiveSidebar("keuangan")}><i className="fas fa-wallet"></i> <span>Keuangan</span></a></li>
-          <li><a className={`nav-link ${activeSidebar === "inventaris" ? "active" : ""}`} onClick={() => setActiveSidebar("inventaris")}><i className="fas fa-box"></i> <span>Inventaris</span></a></li>
 
           <li className="sidebar-heading">Alat Bantu Organisasi</li>
           <li><a className={`nav-link ${activeSidebar === "ai" ? "active" : ""}`} onClick={() => setActiveSidebar("ai")}><i className="fas fa-robot text-warning"></i> <span>Asisten AI</span></a></li>
@@ -281,7 +275,6 @@ export default function DashboardKementerian() {
               <div className="col-6 col-md-3"><div className="info-box border-0 shadow-sm"><div className="icon-circle bg-gradient-blue"><i className="fas fa-inbox"></i></div><div><small className="fw-bold text-muted">S. MASUK</small><h4 className="fw-bold m-0">{suratMasuk.length}</h4></div></div></div>
               <div className="col-6 col-md-3"><div className="info-box border-0 shadow-sm"><div className="icon-circle bg-gradient-yellow text-dark"><i className="fas fa-paper-plane"></i></div><div><small className="fw-bold text-muted">S. KELUAR</small><h4 className="fw-bold m-0">{suratKeluar.length}</h4></div></div></div>
               <div className="col-12 col-md-3"><div className="info-box border-0 shadow-sm"><div className="icon-circle bg-gradient-green"><i className="fas fa-wallet"></i></div><div><small className="fw-bold text-muted">SALDO KAS</small><h4 className="fw-bold text-success m-0">{formatRp(totalSaldo)}</h4></div></div></div>
-              <div className="col-12 col-md-3"><div className="info-box border-0 shadow-sm"><div className="icon-circle bg-gradient-red"><i className="fas fa-box"></i></div><div><small className="fw-bold text-muted">ASET INV</small><h4 className="fw-bold text-danger m-0">{inventaris.length}</h4></div></div></div>
             </div>
           </div>
         )}
@@ -413,42 +406,6 @@ export default function DashboardKementerian() {
                             </tr>
                           )
                         })
-                      }
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* --- MENU: INVENTARIS --- */}
-        {activeSidebar === "inventaris" && (
-          <div className="animate-fade-in-up">
-            <h4 className="fw-bold mb-4" style={{ color: "#003399" }}>Manajemen Inventaris</h4>
-            <ul className="nav nav-pills mb-3 gap-2">
-              <li className="nav-item"><button className={`nav-link btn-sm ${activeSubTabInv === "rekap" ? "active" : "bg-white border text-dark"}`} onClick={() => setActiveSubTabInv("rekap")}>Rekapitulasi</button></li>
-              <li className="nav-item"><button className={`nav-link btn-sm ${activeSubTabInv === "buku" ? "active btn-warning text-dark" : "bg-white border text-dark"}`} onClick={() => setActiveSubTabInv("buku")}>Buku Inv.</button></li>
-            </ul>
-
-            {activeSubTabInv === "rekap" && (
-              <div className="card border-0 shadow-sm rounded-4 p-3">
-                 <div className="d-flex justify-content-between align-items-center mb-3 border-bottom pb-3">
-                  <span className="fw-bold text-danger">Rekapitulasi Aset</span>
-                  <button className="btn btn-sm btn-danger shadow-sm" onClick={() => openModalInv("Rekap")}><i className="fas fa-plus"></i> Tambah Aset</button>
-                </div>
-                <div className="table-responsive">
-                  <table className="table table-hover align-middle text-nowrap">
-                    <thead className="table-light"><tr><th>Barang</th><th>Merk</th><th>Tahun</th><th>Jml</th><th>Kondisi</th><th>Aksi</th></tr></thead>
-                    <tbody>
-                      {inventaris.filter(i => i.type === "Rekap").length === 0 ? <tr><td colSpan={6} className="text-center py-4 text-muted">Belum ada aset</td></tr> : 
-                        inventaris.filter(i => i.type === "Rekap").map(i => (
-                          <tr key={i.id}>
-                            <td className="fw-bold">{i.nama}</td><td>{i.merk || "-"}</td><td>{i.thn || "-"}</td><td><span className="badge bg-secondary">{i.jml}</span></td>
-                            <td>{i.cond === "Baik" ? <span className="badge bg-success">Baik</span> : <span className="badge bg-danger">{i.cond}</span>}</td>
-                            <td><button className="btn btn-sm btn-outline-danger rounded-circle"><i className="fas fa-trash"></i></button></td>
-                          </tr>
-                        ))
                       }
                     </tbody>
                   </table>
@@ -718,7 +675,6 @@ export default function DashboardKementerian() {
       {/* RENDER KOMPONEN MODAL SECARA KONDISIONAL */}
       {isModalSuratOpen && <ModalTambahSurat kementerianName={currentUserScope} tipe={tipeSurat} onClose={() => setIsModalSuratOpen(false)} />}
       {isModalKeuOpen && <ModalTambahKeuangan kementerianName={currentUserScope} kategori={kategoriKeu} onClose={() => setIsModalKeuOpen(false)} />}
-      {isModalInvOpen && <ModalTambahInventaris kementerianName={currentUserScope} tipe={tipeInv} onClose={() => setIsModalInvOpen(false)} />}
 
     </div>
   );
